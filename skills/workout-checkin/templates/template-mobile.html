@@ -1,0 +1,1624 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  运动打卡周报 · Handlebars 数据契约（单一真源 · 移动端模板）
+  ============================================================
+  本注释是 data.json 的完整字段规范。生成数据前必读；
+  修改模板占位符时必须同步更新此契约。
+
+  ## 数值格式总则
+  - 人数 / 次数 / 分钟 / 卡路里 / 金额：四舍五入取整
+  - 百分比：四舍五入取整（不带 % 号）
+  - 角度：保留 1 位小数
+  - 所有 {{var}} 均为 HTML 转义输出（双括号），禁止富文本
+
+  ## 保存图片命名
+  - 文件名 = <weekStart 年>-issue<NN>-<MM.DD>.png，如 2026-issue01-10.08.png；
+    由 render.mjs 的 saveName helper 生成，与 reports/ 归档命名同源，不随保存当天日期变化。
+
+  ## class 名规则（html2canvas-pro 导出兼容，新增 class 时必读）
+  - html2canvas-pro 导出管线会把克隆 DOM 的 class 名归一为小写：驼峰类名的 CSS 规则
+    在页面显示正常，但在导出图片中会静默失效（如破纪录胶囊变紫、里程碑 Lv 掉底色）。
+  - 因此所有由数据驱动的 class 后缀（statusClass / personaClass / spotlight.type /
+    streakCapsule.style / milestoneCelebrations.badge）在模板里一律
+    {{lower xxx}} 转小写输出，CSS 只定义小写类名。
+  - 数据契约中的枚举原值不变（recordBreaker / darkGoldGlow / fatBurner 等），仅渲染层转小写。
+
+  ## 顶层字段（36 个基础字段 + insights（AI 补写）+ 8 个扩展字段，含 5 个列表）
+
+  ### 头部
+  - groupName          群名，取 members.json 的 group
+  - issueNo            期号 = anchorIssue + (本周周一 − 锚点所在自然周周一) ÷ 7 天
+  - weekStart/weekEnd  周期起止，格式 YYYY-MM-DD（常规周 = 周一 ~ 周日；首期锚点 = 实际开始日 ~ 该周周日）
+  - generatedAt        生成时间，格式 YYYY-MM-DD HH:mm
+  - minCheckins        达标线次数，取 members.json 的 weekRule.minCheckins
+
+  ### 核心指标
+  - totalMembers       参与统计的成员总数（status=active）
+  - metCount           达标人数（打卡次数 ≥ minCheckins）
+  - notMetCount        未达标人数 = totalMembers − metCount
+  - targetRate         达标率% = metCount ÷ totalMembers × 100，取整
+  - targetRateAngle    = targetRate × 3.6，1 位小数（达标率环形图）
+  - checkinCount       打卡人数（≥1 次且非请假）
+  - checkinPercent     = checkinCount ÷ totalMembers × 100，取整
+  - leaveCount         请假豁免人数（整周豁免，含 0 打卡且请假次数 ≥ 达标线者）
+  - leavePercent       = leaveCount ÷ totalMembers × 100，取整
+  - absentCount        未打卡人数：非整周豁免且本周打卡 0 次（带 times 的部分请假者只要 0 打卡也计入本档，
+                       三类计数 checkinCount + leaveCount + absentCount = totalMembers 恒成立）
+  - absentPercent      = absentCount ÷ totalMembers × 100，取整
+  - checkinAngle       = checkinPercent × 3.6，1 位小数
+  - leaveAngle         = leavePercent × 3.6，1 位小数
+  - absentAngle        = 360 − checkinAngle − leaveAngle（相减保证闭环，不独立换算）
+  - redPacketTotal     红包总额（元）= Σ 各档位金额
+  - redPacketTrendText 红包趋势文案：无上期 →「首期 · 暂无对比」；
+                       否则「较上期 +¥N」/「较上期 −¥N」/「与上期持平」
+
+  ### 运动类型（模块 02）
+  - sportStats[]       按人次降序，最多 6 项（6+1 规则见下）：
+      - name             运动标准名（经 sportAlias 归一后）
+      - count            人次（一条记录 = 1 人次）
+      - barWidthPercent  = count ÷ max(count) × 100，取整
+      - barOpacity       透明度 = 1 − index × 0.08，最低 0.5（1 位小数）
+      - minutes          本项目总分钟（insights 取材用，模板不消费）
+      - calories         本项目总卡路里（同上）
+      - kcalPerMin       燃效 = calories ÷ minutes，1 位小数（minutes 为 0 时取 0）
+  - 6+1 规则：运动类型 ≤ 7 种 → sportStats 全量列出，hasOtherSports=false；
+    ≥ 8 种 → sportStats 只取前 6 种，其余合并为「其他」行（列表恒 ≤ 7 行）
+  - hasOtherSports     布尔；运动类型 ≥ 8 种时为 true
+  - otherSportCount    「其他」聚合的项目数（总类型数 − 6）
+  - otherSportTotal    「其他」聚合的总人次
+  - otherBarWidthPercent = otherSportTotal ÷ max(count) × 100，取整
+
+  ### 打卡名单（模块 03）
+  - checkinList[]      按本周次数降序（次数相同再按卡路里降序）；
+                       **未打卡成员也并入本列表**（次数 0、分钟 0、卡路里 0，排序自然沉底）：
+      - nickname         昵称（成员表标准名）
+      - totalMinutes     总分钟（含折算：楼层×convert.climbPerFloorMin、公里×convert.kmPerMin[项目]、个数×convert.minPerCount[项目]）
+      - totalCalories    总卡路里 = Σ MET × 体重kg × 时长h
+      - loadScore        Σ(MET × 分钟)，体重无关；审计用 avgMET = loadScore ÷ totalMinutes
+      - deltaText        「较上期增减」角标文本，如 ▲55 / ▼42；为 null 时该行不显示（只留数量，单位由列头交代）
+      - deltaClass       up | down，决定角标配色
+      - deltaMinutes     带符号的增减分钟数（审计用）
+      - checkinCount     本周打卡次数
+      - statusClass      胶囊样式类：success（达标）/ warning（差 N 次）/ danger（未打卡）
+      - gapText          状态文案：达标 →「达标」；打卡不足但打卡+部分请假（leaves 带 times）≥ 达标线
+                         →「达标+N请假」；有效次数不足 →「差 N 次」（N = minCheckins − 打卡 − 请假）；
+                         未打卡 →「未打卡」（0 打卡且 0 请假）
+      - 部分请假说明：leaves 带 times 的成员进打卡名单（有效次数 = 打卡 + 请假，N 次抵 N 次义务）；
+        leaveList 只列整周豁免（未注明次数的请假，或 0 打卡且请假次数 ≥ 达标线者）
+      - streak           当前达标连击周数（cumulative 链式累计）
+      - streakCapsule    连击胶囊对象或 null（streak < 2 不显示）：{streak, style, isLegendary, emoji}；
+                         style 枚举 lightGold(2-4) / darkGold(5-9) / darkGoldGlow(10-19) /
+                         legendaryGlow(20-29 皇冠👑) / flameGold(30+ 真金火炼🔥，胶囊样式固定不再新增档位，
+                         成就等级每 +10 周继续提升，40-49 周 Lv6、50-59 周 Lv7…)
+      - spotlight        本周 spotlight 对象或 null：{type, label}（五类：破纪录/回归战士/
+                         燃效之星/进步之星/消耗之星，多颗命中只显示优先级最高 1 颗）
+      - personaTag       人格主标签（有专精取次数最多的专精，无专精取燃烧系/松弛系）或 null
+      - personaClass     标签配色类：按强度档三色（burn 燃烧系橙 / balance 均衡系蓝 / relax 松弛系绿；专精与其强度档同色）/ null
+  - totalMinutesSum    名单全体总分钟合计（未打卡为 0 值，合并不影响数值）
+  - totalCaloriesSum   名单全体总卡路里合计
+  - totalSessions      全群总人次（= 流水条数；同一次打卡的多个项目各计 1 人次）
+  - avgMinutesPerSession = totalMinutesSum ÷ totalSessions，取整（人均单次时长；无人次时为 0）
+
+  ### 请假豁免（模块 04）
+  - leaveList[]        nickname、reason（请假原因短语，如「病假」）；
+                       空数组时列表区显示空值提示「本周全员运动，无人请假」
+
+  ### 红包汇总（模块 05）
+  - redPacketTiers[]   只列实际有人罚红包的档位，金额降序：
+      - tier             档位文案，如「¥10 · 差 2 次或未打卡」「¥5 · 差 1 次」
+                         （0-1 次档的「差 N 次」N = minCheckins − 1）
+      - peopleCount      该档人数
+      - amount           该档合计金额 = 单价 × 人数
+      - nameList         名单，顿号「、」分隔
+  - totalPeople        罚红包人数合计（不含 ¥0 档）
+  （全员达标/请假时 redPacketTiers 为空数组，totalPeople 为 0）
+
+  ### 趋势与激励（模块 06）
+  - returnWelcome      对象或 null（无回归成员时为 null，整个回归欢迎卡片隐藏）：
+      - initial         昵称首字符（中文取首字，英文取首字母大写）
+      - nickname        昵称
+      - message         文案，如「上周请假，本周回归打卡 N 分钟，欢迎回来！」
+      判定：上一期 reports/<年>-issue<NN-1>.json 中状态为 leave 的成员，
+      本周 checkin ≥1 次 → 回归；多人回归取打卡分钟最多的一位
+
+  ### 数据洞察（模块 07）
+  - insights[]         固定 6 栏 + 条件栏 + 最多 2 条自由栏（共 6-9 条）；每条 {title, content}，
+                       序号由模板自动生成（从 1 起，数据无需提供）
+    固定栏目（title 枚举，按序排列）：达标快报 / 趋势解读 / 强度观察 / 项目版图 / 能量账本 / 红包入池
+    定位：只写模板卡片展示不出来的增量分析，禁止复读本周之星卡 / 回归卡 / 名单胶囊已有内容
+    条件栏「连击动态」：streakBreaks 非空时必须插入「项目版图」之前（此时共 7 条固定），
+    streakBreaks 为空时禁止出现（render.mjs 双向强校验）；文案从连击文案池按 {N} 大小选用语气
+    （取材规则与两池明细见 references/insight-writing.md §1）；render.mjs 强校验：条数越界 / 固定 title 缺失 / 顺序错误 / 结构非法 / title 非 4 字 → 报错
+    自由栏（0-2 条，可选）：从动态扩展池筛选（榜单刷新/项目对比/士气动员/时节展望/特别事件/惊喜彩蛋），宁缺毋滥；title 同样必须 4 字
+
+  ## 扩展字段（8 个，calc 合同输出；模板直接消费前 4 个，其余为下游/审计数据）
+  - calorieKing                消耗之星对象或 null：{nickname, kcal, streakWeeks?}
+                               （streakWeeks 仅蝉联 ≥3 周时出现，模板显示「蝉联 N 周」）
+  - efficiencyStar             燃效之星对象或 null：{nickname, avgMet, streakWeeks?}
+                               （avgMet = Σ(MET×分钟)/Σ分钟，体重归一的平均强度；旧口径 kcal/min 含体重乘数已废弃）
+  - progressStar               进步之星对象或 null：{nickname, prevAvgMet, curMet, improvementPct}
+                               （提升率按 kcal/min 计算，同一人体重约掉；展示值统一为 MET）
+  - milestoneCelebrations[]    本周新解锁里程碑：{nickname, badge, label, level, value, unit}；空数组隐藏
+  - spotlights                 昵称 → {type, label} 映射（个人战报/审计用，模板不直接消费）
+  - cumulative                 链式累计快照 {group, members}（下期链式与个人战报用，模板不直接消费）
+  - metSnapshot                当期 MET + 换算系数快照（口径留存，模板不直接消费）
+  - streakBreaks[]             断更提示名单：[{nickname, brokenStreak, wasTopStreak, newTop}]（上期达标 → 本期未达标；
+                               wasTopStreak=断更前是否持有全群最长连击，newTop=本期结算后新王 {nickname, streak}，
+                               供 AI insights 连击文案池取材，模板不直接消费）
+-->
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{groupName}} · 第{{issueNo}}期（{{weekStart}}–{{weekEnd}}）周报</title>
+    <style id="theme-vars">
+/* ============================================================
+   Claude Design Library - Light Theme Token CSS
+   基于 Claude css.json 提取的设计 token，适配浅色主题
+   ============================================================ */
+
+:root {
+  /* ---- Brand / Primary ---- */
+  --claude-brand-50: #3a2a22;
+  --claude-brand-100: #4d3528;
+  --claude-brand-200: #6b4533;
+  --claude-brand-300: #8a5740;
+  --claude-brand-400: #b0683f;
+  --claude-brand-500: #d97757;
+  --claude-brand-600: #e08d6f;
+  --claude-brand-700: #e8a98f;
+  --claude-brand-800: #f0c6b3;
+  --claude-brand-900: #f8e3d8;
+
+  --claude-primary: #d97757;
+  --claude-primary-foreground: #faf9f5;
+
+  /* ---- Success ---- */
+  --claude-success-50: #232a1c;
+  --claude-success-100: #2e3823;
+  --claude-success-200: #3f4d30;
+  --claude-success-300: #556640;
+  --claude-success-400: #708353;
+  --claude-success-500: #8ca06f;
+  --claude-success-600: #a3b58a;
+  --claude-success-700: #bccaa8;
+  --claude-success-800: #d6dfc8;
+  --claude-success-900: #edf2e4;
+
+  /* ---- Error ---- */
+  --claude-error-50: #3a1f1f;
+  --claude-error-100: #4d2424;
+  --claude-error-200: #6e2c2c;
+  --claude-error-300: #93302f;
+  --claude-error-400: #c43a39;
+  --claude-error-500: #ef4444;
+  --claude-error-600: #f26b6b;
+  --claude-error-700: #f59292;
+  --claude-error-800: #f9b9b9;
+  --claude-error-900: #fcdede;
+
+  /* ---- Text (浅色主题：用深色端作为文字色) ---- */
+  --claude-text-50: #1b1b19;
+  --claude-text-100: #2c2c2b;
+  --claude-text-200: #46443b;
+  --claude-text-300: #6e6d68;
+  --claude-text-400: #908e84;
+  --claude-text-500: #b7b5a9;
+  --claude-text-600: #c3c0b6;
+  --claude-text-700: #d8d6cd;
+  --claude-text-800: #f1f1ef;
+  --claude-text-900: #faf9f5;
+
+  /* ---- Background (浅色主题) ---- */
+  --claude-bg: #f5f4ee;          /* 页面背景：暖米色 */
+  --claude-bg-secondary: #e9e6dc; /* 次级背景 / 表头 */
+  --claude-bg-card: #ffffff;     /* 卡片背景：纯白 */
+  --claude-bg-muted: #f1f1ef;   /* 柔和背景 */
+
+  /* ---- Border (浅色主题：用浅色端) ---- */
+  --claude-border: #d8d6cd;
+  --claude-border-light: #e8e6df;
+  --claude-border-muted: #f0eee8;
+
+  /* ---- Chart Colors ---- */
+  --claude-chart-1: #b05730;
+  --claude-chart-2: #9c87f5;
+  --claude-chart-3: #1a1915;
+  --claude-chart-4: #2f2b48;
+  --claude-chart-5: #b4552d;
+
+  /* ---- Accent / Semantic ---- */
+  --claude-accent: #7c6f5c;
+  --claude-accent-foreground: #faf9f5;
+  --claude-muted: #f1f1ef;
+  --claude-muted-foreground: #6e6d68;
+
+  /* ---- Radius ---- */
+  --claude-radius-sm: 8px;
+  --claude-radius-md: 12px;
+  --claude-radius: 16px;
+  --claude-radius-xl: 20px;
+  --claude-radius-2xl: 24px;
+  --claude-radius-full: 9999px;
+
+  /* ---- Spacing Base ---- */
+  --claude-spacing: 4px;
+
+  /* ---- Shadow ---- */
+  --claude-shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --claude-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+  --claude-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --claude-shadow-md: 0 1px 3px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+  --claude-shadow-lg: 0 1px 3px rgba(0, 0, 0, 0.1), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+
+  /* ---- Font Families ---- */
+  --claude-font-display: 'Newsreader', Georgia, ui-serif, serif;
+  --claude-font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --claude-font-serif: 'Lora', Georgia, ui-serif, serif;
+  --claude-font-mono: 'Geist Mono', ui-monospace, monospace;
+}
+
+/* ---- Typography Base ---- */
+html {
+  font-family: var(--claude-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- Utility Semantic Aliases (供HTML直接使用) ---- */
+:root {
+  --color-background: var(--claude-bg);
+  --color-foreground: var(--claude-text-50);
+  --color-muted-foreground: var(--claude-text-300);
+  --color-card: var(--claude-bg-card);
+  --color-card-foreground: var(--claude-text-50);
+  --color-border: var(--claude-border);
+  --color-input: var(--claude-border-light);
+  --color-primary: var(--claude-primary);
+  --color-primary-foreground: var(--claude-primary-foreground);
+  --color-secondary: var(--claude-bg-secondary);
+  --color-secondary-foreground: var(--claude-text-100);
+  --color-accent: var(--claude-accent);
+  --color-accent-foreground: var(--claude-accent-foreground);
+  --color-destructive: var(--claude-error-500);
+  --color-destructive-foreground: #ffffff;
+  --color-success: var(--claude-success-500);
+  --color-success-bg: var(--claude-success-900);
+  --color-success-foreground: var(--claude-success-200);
+  --color-warning: #c08a3a;
+  --color-warning-bg: #faf0dc;
+  --color-warning-foreground: #8a6420;
+  --color-ring: var(--claude-primary);
+  --radius-sm: var(--claude-radius-sm);
+  --radius-md: var(--claude-radius-md);
+  --radius-lg: var(--claude-radius);
+  --radius-xl: var(--claude-radius-xl);
+}
+
+    </style>
+</head>
+<body>
+<div class="page-wrap">
+  <article class="report">
+
+    <!-- ========== 头部 Hero ========== -->
+    <header class="hero">
+      <div class="hero-top">
+        <span class="issue-badge">第 {{issueNo}} 期</span>
+        <span class="hero-date">
+          <span class="hero-date-start">{{weekStart}}</span>
+          <span class="hero-date-sep">—</span>
+          <span class="hero-date-end">{{weekEnd}}</span>
+        </span>
+      </div>
+      <h1 class="hero-title">{{groupName}}<span class="hero-title-sub">周报</span></h1>
+      <div class="hero-meta">
+        <span>生成时间 · {{generatedAt}}</span>
+        <span class="meta-dot">·</span>
+        <span>达标线 · 每周 ≥ {{minCheckins}} 次</span>
+      </div>
+    </header>
+    <!-- /头部 Hero -->
+
+    <!-- ========== 核心指标（移动端融合卡片：达标率环 + 本周红包） ========== -->
+    <section class="metrics-section">
+      <!-- 核心指标：达标率（SVG 圆环：pathLength=360 使 dasharray 单位与角度一致，模板变量直接可用） -->
+      <div class="metric-hero">
+        <div class="metric-hero-ring">
+          <svg class="ring-svg" viewBox="0 0 130 130" width="130" height="130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <!-- 背景环 -->
+            <circle cx="65" cy="65" r="56" fill="none" stroke="#f0eee8" stroke-width="18"/>
+            <!-- 进度环：dasharray = {{targetRateAngle}}（进度角度）360；rotate(-90) 让起点在 12 点方向 -->
+            <circle cx="65" cy="65" r="56" fill="none" stroke="#d97757" stroke-width="18"
+              pathLength="360" stroke-dasharray="{{targetRateAngle}} 360" transform="rotate(-90 65 65)"/>
+          </svg>
+          <div class="metric-hero-inner">
+            <div class="metric-hero-value">{{targetRate}}%</div>
+            <div class="metric-hero-label">达标率</div>
+          </div>
+        </div>
+        <div class="metric-hero-detail">
+          <!-- 本周红包（融合进 hero 卡片） -->
+          <div class="metric-redpacket">
+            <div class="metric-redpacket-label">本周红包</div>
+            <div class="metric-redpacket-value">¥{{redPacketTotal}}<span class="metric-redpacket-sub">{{redPacketTrendText}}</span></div>
+          </div>
+          <div class="metric-hero-detail-row">
+            <span class="detail-dot dot-success"></span>
+            <span>已达标</span>
+            <span class="detail-num">{{metCount}} 人</span>
+          </div>
+          <div class="metric-hero-detail-row">
+            <span class="detail-dot dot-warning"></span>
+            <span>未达标</span>
+            <span class="detail-num">{{notMetCount}} 人</span>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- /核心指标 -->
+
+    <!-- ========== 模块 01 & 02：参与状态 + 运动分布 ========== -->
+    <section class="dual-section">
+      <div class="dual-col">
+        <h2 class="section-heading"><span class="heading-num">01</span>参与状态</h2>
+        <div class="pie-block">
+          <!-- SVG 圆环：三段扇区，每段 pathLength=360，用「前导透明段」dasharray 定位起点（禁用 dashoffset） -->
+          <div class="donut-chart">
+            <svg class="ring-svg" viewBox="0 0 130 130" width="130" height="130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <!-- 已打卡 -->
+              <circle cx="65" cy="65" r="53" fill="none" stroke="#8ca06f" stroke-width="24"
+                pathLength="360" stroke-dasharray="{{checkinAngle}} 360" transform="rotate(-90 65 65)"/>
+              <!-- 请假豁免：dasharray on0 / off{{checkinAngle}} / on{{leaveAngle}} / off{{absentAngle}}，落在 [checkin, checkin+leave] -->
+              <circle cx="65" cy="65" r="53" fill="none" stroke="#908e84" stroke-width="24"
+                pathLength="360" stroke-dasharray="0 {{checkinAngle}} {{leaveAngle}} {{absentAngle}}" transform="rotate(-90 65 65)"/>
+              <!-- 未打卡：on0 / off{{checkinAngle}} / on0 / off{{leaveAngle}} / on{{absentAngle}}，三段角度之和恒为 360，落在最后一段 -->
+              <circle cx="65" cy="65" r="53" fill="none" stroke="#c08a3a" stroke-width="24"
+                pathLength="360" stroke-dasharray="0 {{checkinAngle}} 0 {{leaveAngle}} {{absentAngle}}" transform="rotate(-90 65 65)"/>
+            </svg>
+            <div class="donut-hole">
+              <div class="donut-total">{{totalMembers}}</div>
+              <div class="donut-unit">人</div>
+            </div>
+          </div>
+          <div class="pie-legend">
+            <div class="legend-row is-success">
+              <span class="legend-swatch sw-success"></span>
+              <span class="legend-name">已打卡</span>
+              <span class="legend-count">{{checkinCount}} 人</span>
+              <span class="legend-pct">{{checkinPercent}}%</span>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch sw-muted"></span>
+              <span class="legend-name">请假豁免</span>
+              <span class="legend-count">{{leaveCount}} 人</span>
+              <span class="legend-pct">{{leavePercent}}%</span>
+            </div>
+            <div class="legend-row is-warning">
+              <span class="legend-swatch sw-warning"></span>
+              <span class="legend-name">未打卡</span>
+              <span class="legend-count">{{absentCount}} 人</span>
+              <span class="legend-pct">{{absentPercent}}%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dual-col">
+        <h2 class="section-heading"><span class="heading-num">02</span>运动类型</h2>
+        <div class="sport-bars">
+          {{#each sportStats}}
+          <div class="sport-bar-row">
+            <div class="sport-bar-head">
+              <span class="sport-bar-name">{{name}}</span>
+              <span class="sport-bar-num">{{count}} 次</span>
+            </div>
+            <div class="sport-bar-track">
+              <span class="sport-bar-fill" style="width: {{barWidthPercent}}%; opacity: {{barOpacity}};"></span>
+            </div>
+          </div>
+          {{/each}}
+          {{#if hasOtherSports}}
+          <div class="sport-bar-row">
+            <div class="sport-bar-head">
+              <span class="sport-bar-name sport-bar-other">其他 {{otherSportCount}} 项</span>
+              <span class="sport-bar-num">{{otherSportTotal}} 次</span>
+            </div>
+            <div class="sport-bar-track">
+              <span class="sport-bar-fill sport-bar-fill-other" style="width: {{otherBarWidthPercent}}%;"></span>
+            </div>
+          </div>
+          {{/if}}
+        </div>
+      </div>
+    </section>
+    <!-- /模块 01 & 02 -->
+
+    <!-- ========== 模块 03：打卡名单（未打卡成员并入，次数 0 沉底） ========== -->
+    <section class="table-section">
+      <h2 class="section-heading"><span class="heading-num">03</span>打卡名单<span class="heading-count">{{checkinCount}} 人打卡 · {{absentCount}} 人未打卡</span></h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-name">昵称</th>
+              <th class="col-num">总分钟</th>
+              <th class="col-num">总卡路里</th>
+              <th class="col-num">打卡次数</th>
+              <th class="col-center">达标</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{#each checkinList}}
+            <tr>
+              <td class="col-name">
+                <div class="name-cell">
+                  <div class="name-row">
+                    <span class="name-text">{{nickname}}</span>
+                    {{#if personaTag}}<span class="cap cap-persona-{{lower personaClass}}">{{personaTag}}</span>{{/if}}
+                  </div>
+                  <div class="capsule-row">
+                    {{#if streakCapsule}}<span class="cap cap-streak cap-streak-{{lower streakCapsule.style}}">{{#if streakCapsule.emoji}}{{streakCapsule.emoji}} {{/if}}连击 {{streakCapsule.streak}} 周</span>{{/if}}
+                    {{#if spotlight}}<span class="cap cap-spotlight sp-{{lower spotlight.type}}">{{spotlight.label}}</span>{{/if}}
+                  </div>
+                </div>
+              </td>
+              <td class="col-num tabular">{{totalMinutes}}{{#if deltaText}}<span class="cap-delta cap-delta-{{deltaClass}}">{{deltaText}}</span>{{/if}}</td>
+              <td class="col-num tabular">{{totalCalories}}</td>
+              <td class="col-num tabular">{{checkinCount}}</td>
+              <td class="col-center">
+                <span class="badge badge-{{lower statusClass}}">{{gapText}}</span>
+              </td>
+            </tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-summary">
+        <span class="table-note">* 卡路里按项目与时长折算</span>
+        <span class="summary-right">
+          <span>合计 · 总时长 <b>{{totalMinutesSum}} 分钟</b></span>
+          <span class="meta-dot">·</span>
+          <span>总消耗 <b>{{totalCaloriesSum}} kcal</b></span>
+        </span>
+      </div>
+    </section>
+    <!-- /模块 03 -->
+
+    <!-- ========== 模块 04：请假豁免（未打卡成员已并入 03 打卡名单） ========== -->
+    <section class="list-section">
+      <h2 class="section-heading"><span class="heading-num">04</span>请假豁免<span class="heading-count">{{leaveCount}} 人</span></h2>
+      <div class="list-cards leave-cards">
+        {{#each leaveList}}
+        <div class="list-card leave">
+          <div class="list-card-main">
+            <span class="list-card-name">{{nickname}}</span>
+            <span class="list-card-reason">{{reason}}</span>
+          </div>
+        </div>
+        {{else}}
+        <div class="empty-hint">本周全员运动，无人请假</div>
+        {{/each}}
+      </div>
+    </section>
+    <!-- /模块 04 -->
+
+    <!-- ========== 模块 05：红包汇总 ========== -->
+    <section class="table-section">
+      <h2 class="section-heading"><span class="heading-num">05</span>红包汇总</h2>
+      <div class="table-wrap">
+        <table class="data-table simple">
+          <thead>
+            <tr>
+              <th>档位</th>
+              <th class="col-num">人数</th>
+              <th class="col-num">金额</th>
+              <th>名单</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{#each redPacketTiers}}
+            <tr>
+              <td>{{tier}}</td>
+              <td class="col-num tabular">{{peopleCount}}</td>
+              <td class="col-num tabular">¥{{amount}}</td>
+              <td class="col-namelist">{{nameList}}</td>
+            </tr>
+            {{/each}}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>合计</td>
+              <td class="col-num tabular">{{totalPeople}}</td>
+              <td class="col-num tabular"><b>¥{{redPacketTotal}}</b></td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+    <!-- /模块 05 -->
+
+    <!-- ========== 模块 06：趋势与激励 ========== -->
+    <section class="trend-section">
+      <h2 class="section-heading"><span class="heading-num">06</span>趋势与激励</h2>
+      <div class="trend-grid">
+        {{#if returnWelcome}}
+        <div class="trend-card">
+          <div class="trend-card-head">
+            <span class="trend-card-title">回归欢迎</span>
+          </div>
+          <div class="return-card">
+            <div class="return-avatar">{{returnWelcome.initial}}</div>
+            <div class="return-body">
+              <div class="return-name">{{returnWelcome.nickname}}</div>
+              <div class="return-msg">{{returnWelcome.message}}</div>
+            </div>
+          </div>
+        </div>
+        {{/if}}
+
+        {{#if calorieKing}}
+        <div class="trend-card">
+          <div class="trend-card-head">
+            <span class="trend-card-title">本周之星</span>
+          </div>
+          <div class="star-board{{#if efficiencyStar}}{{#if progressStar}} star-3{{/if}}{{/if}}">
+            <div class="star-main sc-calorie">
+              <div class="star-label"><span class="star-dot"></span>消耗之星{{#if calorieKing.streakWeeks}}<span class="star-tag">蝉联 {{calorieKing.streakWeeks}} 周</span>{{/if}}</div>
+              <div class="star-name">{{calorieKing.nickname}}</div>
+              <div class="star-value">{{calorieKing.kcal}}<span class="star-unit"> kcal</span></div>
+            </div>
+            {{#if efficiencyStar}}
+            <div class="star-cell sc-efficiency">
+              <div class="star-label"><span class="star-dot"></span>燃效之星{{#if efficiencyStar.streakWeeks}}<span class="star-tag">蝉联 {{efficiencyStar.streakWeeks}} 周</span>{{/if}}</div>
+              <div class="star-name">{{efficiencyStar.nickname}}</div>
+              <div class="star-value-sm">{{efficiencyStar.avgMet}}<span class="star-unit"> MET</span></div>
+            </div>
+            {{/if}}
+            {{#if progressStar}}
+            <div class="star-cell sc-progress">
+              <div class="star-label"><span class="star-dot"></span>进步之星<span class="star-tag">进步 +{{progressStar.improvementPct}}%</span></div>
+              <div class="star-name">{{progressStar.nickname}}</div>
+              <div class="star-value-range">{{progressStar.prevAvgMet}} → {{progressStar.curMet}}<span class="star-unit"> MET</span></div>
+            </div>
+            {{/if}}
+          </div>
+        </div>
+        {{/if}}
+
+        {{#if milestoneCelebrations}}
+        <div class="trend-card">
+          <div class="trend-card-head">
+            <span class="trend-card-title">里程碑解锁</span>
+          </div>
+          <div class="milestone-list">
+            {{#each milestoneCelebrations}}
+            <div class="milestone-card">
+              <div class="milestone-level ml-{{lower badge}}">Lv{{level}}</div>
+              <div class="milestone-body">
+                <div class="milestone-name">{{nickname}}</div>
+                <div class="milestone-label">{{label}} <span class="milestone-value">{{value}}{{unit}}</span></div>
+              </div>
+            </div>
+            {{/each}}
+          </div>
+        </div>
+        {{/if}}
+      </div>
+    </section>
+    <!-- /模块 06 -->
+
+    <!-- ========== 模块 07：数据洞察 ========== -->
+    <section class="insights-section">
+      <h2 class="section-heading"><span class="heading-num">07</span>数据洞察</h2>
+      <div class="insight-list">
+        {{#each insights}}
+        <div class="insight-item">
+          <div class="insight-index">{{inc @index}}</div>
+          <div class="insight-body">
+            <div class="insight-title">{{title}}</div>
+            <div class="insight-text">{{content}}</div>
+          </div>
+        </div>
+        {{/each}}
+      </div>
+    </section>
+    <!-- /模块 07 -->
+
+    <!-- ========== 页脚 ========== -->
+    <footer class="report-footer">
+      <span>{{groupName}}</span>
+      <span class="footer-dot">·</span>
+      <span>第 {{issueNo}} 期 · {{weekStart}} — {{weekEnd}}</span>
+    </footer>
+
+  </article>
+</div>
+
+    <style>
+  /* ============================================================
+     运动打卡周报 · 定制样式
+     基于 Claude Design Library token
+     ============================================================ */
+
+  /* ---- Base ---- */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html {
+    font-family: var(--claude-font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    color: var(--color-foreground);
+  }
+  body {
+    background-color: var(--color-background);
+    line-height: 1.6;
+  }
+
+  /* ---- Layout（移动端单列：容器上限 480px，桌面上限即手机宽度，保持单栏版式） ---- */
+  .page-wrap {
+    max-width: 480px;
+    margin: 16px auto;
+    padding: 0 12px;
+  }
+  .report {
+    background: var(--color-card);
+    border-radius: 20px;
+    box-shadow: 0 1px 2px rgba(27, 27, 25, 0.04), 0 8px 24px -8px rgba(27, 27, 25, 0.08);
+    padding: 28px 20px;
+    overflow: hidden;
+    position: relative;
+  }
+  /* 顶部渐变色（备用，默认关闭） */
+
+  /* ---- Section Heading ---- */
+  .section-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-foreground);
+    margin-bottom: 16px;
+    letter-spacing: -0.005em;
+  }
+  .heading-num {
+    font-family: var(--claude-font-display);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--color-primary);
+    opacity: 0.85;
+  }
+  .heading-count {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-muted-foreground);
+    font-family: var(--claude-font-mono);
+  }
+
+  /* ==============================================================
+     Module 1: Hero
+     ============================================================== */
+  .hero {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--claude-border-muted);
+  }
+  .hero-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .issue-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    background: var(--claude-brand-900);
+    color: var(--color-primary);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .hero-date {
+    margin-top: 5px;
+    font-family: var(--claude-font-mono);
+    font-size: 13px;
+    color: var(--color-muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-date-sep {
+    margin: 0 3px;
+    opacity: 0.5;
+  }
+  .hero-title {
+    font-family: var(--claude-font-display);
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--color-foreground);
+    margin-bottom: 10px;
+  }
+  .hero-title-sub {
+    font-family: var(--claude-font-display);
+    font-weight: 500;
+    color: var(--color-primary);
+    margin-left: 8px;
+    font-size: 26px;
+    letter-spacing: -0.02em;
+  }
+  .hero-meta {
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  .meta-dot {
+    color: var(--claude-border);
+  }
+
+  /* ==============================================================
+     Module 2: Metrics
+     ============================================================== */
+  .metrics-section {
+    margin-bottom: 20px;
+  }
+  /* Hero metric: 达标率环形图 */
+  /* SVG 圆环填充容器；显式 width/height 属性保证 html2canvas 序列化后尺寸正确 */
+  .ring-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .metric-hero {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 30px;
+    padding: 20px;
+    background: linear-gradient(135deg, var(--claude-brand-900), #fff);
+    border-radius: 16px;
+    border: 1px solid var(--claude-border-muted);
+  }
+  .metric-hero-ring {
+    width: 130px;
+    height: 130px;
+    flex: none;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .metric-hero-inner {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 72.31%;
+    height: 72.31%;
+    border-radius: 50%;
+    background: var(--color-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04) inset;
+  }
+  .metric-hero-value {
+    font-family: var(--claude-font-display);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--color-primary);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .metric-hero-label {
+    font-size: 11px;
+    color: var(--color-muted-foreground);
+    margin-top: 4px;
+  }
+  .metric-hero-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+  }
+  .metric-hero-detail-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+  }
+  .detail-dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .dot-success { background: var(--color-success); }
+  .dot-warning { background: var(--color-warning); }
+  .detail-num {
+    margin-left: auto;
+    font-family: var(--claude-font-mono);
+    font-weight: 600;
+    color: var(--color-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 本周红包（融合进 hero 卡片右侧） */
+  .metric-redpacket {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px dashed var(--claude-border-light);
+  }
+  .metric-redpacket-label {
+    font-size: 12px;
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+  .metric-redpacket-value {
+    display: flex;
+    align-items: end;
+    gap: 10px;
+    font-family: var(--claude-font-display);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--color-primary);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+  .metric-redpacket-sub {
+    font-size: 11px;
+    font-weight: 100;
+    color: var(--color-muted-foreground);
+    font-family: var(--claude-font-mono);
+  }
+
+  /* ==============================================================
+     Dual Section (3&4, 6&7)
+     ============================================================== */
+  .dual-section {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .dual-col {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .dual-col .section-heading {
+    flex: none;
+  }
+
+  /* ---- Donut Chart ---- */
+  .pie-block {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 30px;
+    padding: 20px;
+    background: var(--claude-bg-muted);
+    border-radius: 12px;
+    min-height: 180px;
+  }
+  .donut-chart {
+    width: 130px;
+    height: 130px;
+    border-radius: 50%;
+    position: relative;
+    flex: none;
+  }
+  .donut-hole {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 82px;
+    height: 82px;
+    background: var(--color-card);
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut-total {
+    font-family: var(--claude-font-display);
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--color-foreground);
+    line-height: 1;
+  }
+  .donut-unit {
+    font-size: 11px;
+    color: var(--color-muted-foreground);
+    margin-top: 3px;
+  }
+  .pie-legend {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .sw-success { background: var(--color-success); }
+  .sw-muted { background: var(--claude-text-400); }
+  .sw-warning { background: var(--color-warning); }
+  .legend-name {
+    flex: 1;
+    color: var(--color-foreground);
+  }
+  .legend-count {
+    flex: none;
+    font-family: var(--claude-font-display);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--color-foreground);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .legend-row.is-success .legend-count { color: var(--color-success); }
+  .legend-row.is-warning .legend-count { color: var(--color-warning); }
+  .legend-pct {
+    font-family: var(--claude-font-mono);
+    color: var(--color-muted-foreground);
+    font-size: 11px;
+    width: 36px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Sport Bars ---- */
+  .sport-bars {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    gap: 0;
+    padding: 20px;
+    background: var(--claude-bg-muted);
+    border-radius: 12px;
+    min-height: 240px;
+  }
+  .sport-bar-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sport-bar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+  .sport-bar-name {
+    color: var(--color-foreground);
+    font-weight: 500;
+  }
+  .sport-bar-name.sport-bar-other {
+    color: var(--color-muted-foreground);
+    font-weight: 400;
+  }
+  .sport-bar-num {
+    font-family: var(--claude-font-mono);
+    color: var(--color-muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .sport-bar-track {
+    height: 6px;
+    background: var(--claude-border-muted);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .sport-bar-fill {
+    display: block;
+    height: 100%;
+    max-width: 100%;
+    border-radius: 3px;
+    background-color: var(--color-primary);
+    transition: width 0.3s ease;
+  }
+  .sport-bar-fill-other {
+    background: var(--claude-text-400);
+    opacity: 0.5;
+  }
+
+  /* ==============================================================
+     Tables (打卡名单、红包汇总)
+     ============================================================== */
+  .table-section {
+    margin-bottom: 20px;
+  }
+  .table-wrap {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--claude-border-muted);
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .data-table th {
+    background: var(--claude-bg-muted);
+    font-weight: 600;
+    color: var(--color-muted-foreground);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--claude-border-muted);
+  }
+  .data-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--claude-border-muted);
+    vertical-align: middle;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .data-table tbody tr {
+    transition: background-color 0.15s;
+  }
+  .data-table tbody tr:hover {
+    background: var(--claude-bg-muted);
+  }
+  .data-table tfoot td {
+    padding: 12px 14px;
+    background: var(--claude-bg-muted);
+    font-weight: 600;
+    font-size: 13px;
+    border-top: 1px solid var(--claude-border);
+  }
+  .col-name { min-width: 0; }
+  .col-num {
+    font-family: var(--claude-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .col-center { text-align: center; }
+  .col-namelist {
+    color: var(--color-muted-foreground);
+    font-size: 12px;
+  }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* 打卡名单：昵称 + 胶囊行 */
+  .name-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .name-text { font-weight: 500; color: var(--color-foreground); }
+  .capsule-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  /* ⚠️ 周报胶囊不做基线补偿（与个人报相反）：.cap 为 10px 整行高（14px），
+     html2canvas-pro 在此字号无基线漂移，加 -1.75px 补偿必然过冲。
+     补偿机制仅适用于个人报 11px 小数行高胶囊（15.4px）。
+     禁止给周报胶囊包 .pill-txt 壳或照搬个人报 onclone。 */
+  .cap {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+    line-height: 1.4;
+  }
+  /* 较上期增减角标：紧跟「总分钟」数字，只放方向+数量（单位由列头交代）。
+     极简尺寸（padding 1px 4px）以压缩列宽；下行沿用「未达标」红（error-900 底 / error-300 字），与状态胶囊同色。 */
+  .cap-delta {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 999px;
+    white-space: nowrap;
+    line-height: 1.4;
+    vertical-align: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cap-delta-up { background: #eaf3de; color: #4f7a2a; }
+  .cap-delta-down { background: var(--claude-error-900); color: var(--claude-error-300); }
+  /* ⚠️ html2canvas-pro 导出管线会把克隆 DOM 的 class 名归一为小写，
+     驼峰类名的规则在导出图片中会静默失效（页面显示正常、导出错色/掉样式）。
+     因此所有由数据驱动的 class 必须全小写：模板里经 lower helper 归一，CSS 也只写小写。
+     数据契约中的枚举原值不变（recordBreaker / darkGoldGlow 等），仅渲染层转小写。 */
+  .cap-persona-burn { background: #fbe9e0; color: #c2572e; }
+  .cap-persona-balance { background: #e6ebf2; color: #3f5a7a; }
+  .cap-persona-relax { background: #eaf3de; color: #5f7d2f; }
+  /* spotlight 五类徽章各自配色（与个人战报 spotlight-badge sb-{type} 一一对应）：
+     消耗之星=紫藤（默认兜底）/ 破纪录=徽章身份金 / 回归战士=松弛绿 /
+     燃效之星=燃烧系橙 / 进步之星=均衡蓝 */
+  .cap-spotlight { background: #ece4f4; color: #7a5fb0; }
+  .cap-spotlight.sp-recordbreaker { background: #faf3e3; color: #b08a30; }
+  .cap-spotlight.sp-return { background: #eaf3de; color: #5f7d2f; }
+  .cap-spotlight.sp-efficiencystar { background: #fbe9e0; color: #c2572e; }
+  .cap-spotlight.sp-progressstar { background: #e6ebf2; color: #3f5a7a; }
+  .cap-streak { background: #f7e7c3; color: #a87b1f; }
+  .cap-streak-lightgold { background: #fbf6ea; color: #c4a35f; }
+  .cap-streak-darkgold { background: #ecd28c; color: #7c5c10; }
+  .cap-streak-darkgoldglow { background: #e6bd55; color: #6e4f0a; box-shadow: 0 0 8px rgba(214,164,32,0.7); }
+  .cap-streak-legendaryglow { background: linear-gradient(90deg,#f0c14b,#d4a017); color: #fff; box-shadow: 0 0 6px rgba(232,184,75,0.7); }
+  .cap-streak-flamegold { background: linear-gradient(90deg,#f6ae3d,#e8503a); color: #fff; box-shadow: 0 0 8px rgba(232,110,58,0.65); }
+
+  /* 里程碑解锁：紧凑小卡网格（多人自动换行） */
+  .milestone-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .milestone-card {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--color-card);
+    border: 1px solid var(--claude-border-muted);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .milestone-level {
+    flex: none; width: 34px; height: 34px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--claude-font-mono); font-size: 12px; font-weight: 700;
+  }
+  .milestone-level.ml-streak { background: #f7e7c3; color: #a87b1f; }
+  .milestone-level.ml-fatburner { background: #fbe9e0; color: #c2572e; }
+  .milestone-level.ml-ironman { background: #e6ebf2; color: #3f5a7a; }
+  .milestone-level.ml-allround { background: #f0eaf8; color: #7c5cbf; }
+  .milestone-level.ml-resident { background: #e3f2f0; color: #2f8f83; }
+  .milestone-level.ml-selfdiscipline { background: #eaf3de; color: #5f7d2f; }
+  .milestone-body { min-width: 0; }
+  .milestone-name { font-size: 13px; font-weight: 600; color: var(--color-foreground); }
+  .milestone-label { font-size: 11px; color: var(--color-muted-foreground); }
+  .milestone-value { color: var(--color-foreground); font-weight: 600; }
+
+  /* Table summary */
+  .table-summary {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .table-summary b {
+    color: var(--color-foreground);
+    font-weight: 600;
+  }
+  .summary-right {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .table-note {
+    flex: 1;
+    min-width: 0;
+    font-size: 10px;
+    color: var(--color-muted-foreground);
+    text-align: left;
+  }
+
+  /* ---- Badges ---- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+  .badge-success {
+    background: var(--color-success-bg);
+    color: var(--claude-success-400);
+  }
+  .badge-warning {
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+  }
+  .badge-danger {
+    background: var(--claude-error-900);
+    color: var(--claude-error-300);
+  }
+
+  /* ==============================================================
+     List Cards (请假豁免)
+     ============================================================== */
+  .list-section {
+    margin-bottom: 20px;
+  }
+  .list-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .list-card {
+    padding: 12px 14px;
+    background: var(--claude-bg-muted);
+    border-radius: 10px;
+    border: 1px solid var(--claude-border-muted);
+  }
+  .list-card-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .list-card-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--color-foreground);
+  }
+  .list-card-reason {
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+    text-align: right;
+  }
+  .leave-cards .list-card {
+    border-color: var(--claude-success-700);
+    background: var(--color-success-bg);
+  }
+
+  /* ==============================================================
+     Insights
+     ============================================================== */
+  .insights-section {
+    margin-bottom: 20px;
+  }
+  .insight-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--claude-border-muted);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .insight-item {
+    display: flex;
+    gap: 16px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--claude-border-muted);
+  }
+  .insight-item:last-child {
+    border-bottom: none;
+  }
+  .insight-index {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--claude-brand-900);
+    color: var(--color-primary);
+    font-family: var(--claude-font-display);
+    font-style: italic;
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .insight-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .insight-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-foreground);
+    margin-bottom: 3px;
+  }
+  .insight-text {
+    font-size: 13px;
+    color: var(--color-muted-foreground);
+    line-height: 1.65;
+  }
+
+  /* ==============================================================
+     Trend & Incentive
+     ============================================================== */
+  .trend-section {
+    margin-bottom: 20px;
+  }
+  .trend-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .trend-card {
+    background: var(--claude-bg-muted);
+    border-radius: 12px;
+    border: 1px solid var(--claude-border-muted);
+    padding: 18px;
+  }
+  .trend-card-head {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--claude-border-muted);
+  }
+  .trend-card-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-foreground);
+  }
+  .trend-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-foreground);
+  }
+
+  /* 本周之星：两颗星并排两列，三颗星齐时主星通栏 + 双副星（方案 B） */
+  .star-board {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .star-3 .star-main {
+    grid-column: 1 / -1;
+  }
+  .star-board .star-main:last-child:nth-child(1) {
+    grid-column: 1 / -1;
+  }
+  .star-main {
+    background: var(--color-card);
+    border: 1px solid var(--claude-border-muted);
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+    min-width: 0;
+  }
+  .star-board .star-cell {
+    background: var(--color-card);
+    border: 1px solid var(--claude-border-muted);
+    border-radius: 10px;
+    padding: 12px 8px;
+    text-align: center;
+    min-width: 0;
+  }
+  .star-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+    max-width: 100%;
+  }
+  .star-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+  }
+  /* 三星圆点 + 标题按 12.6 五类配色同源：消耗之星=紫藤 / 燃效之星=燃烧系橙 / 进步之星=均衡蓝；
+     蝉联 / 进步幅度角标（.star-tag）保持金色不变 */
+  .sc-calorie .star-dot { background: #7a5fb0; }
+  .sc-efficiency .star-dot { background: #c2572e; }
+  .sc-progress .star-dot { background: #3f5a7a; }
+  .sc-calorie .star-label { color: #7a5fb0; }
+  .sc-efficiency .star-label { color: #c2572e; }
+  .sc-progress .star-label { color: #3f5a7a; }
+  .star-tag {
+    color: #a87b1f;
+    white-space: nowrap;
+  }
+  .star-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-foreground);
+    margin: 4px 0 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .star-value {
+    font-size: 18px;
+    font-weight: 600;
+    font-family: var(--claude-font-mono);
+    color: var(--color-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .star-value-sm {
+    font-size: 14px;
+    font-weight: 600;
+    font-family: var(--claude-font-mono);
+    color: var(--color-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .star-value-range {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--claude-font-mono);
+    color: var(--color-foreground);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .star-unit {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--color-muted-foreground);
+  }
+
+  /* Return card */
+  .return-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--color-card);
+    border-radius: 10px;
+    border: 1px solid var(--claude-success-700);
+  }
+  .return-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--color-success);
+    color: #fff;
+    font-family: var(--claude-font-display);
+    font-size: 16px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .return-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .return-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-foreground);
+  }
+  .return-msg {
+    font-size: 12px;
+    color: var(--color-success);
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+  .empty-hint {
+    font-size: 12px;
+    color: var(--color-muted-foreground);
+    text-align: center;
+  }
+
+  /* ==============================================================
+     Footer
+     ============================================================== */
+  .report-footer {
+    margin-top: 8px;
+    padding-top: 20px;
+    border-top: 1px solid var(--claude-border-muted);
+    text-align: center;
+    font-size: 11px;
+    color: var(--color-muted-foreground);
+    font-family: var(--claude-font-mono);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .footer-dot {
+    color: var(--claude-border);
+  }
+
+  /* ---- 移动端表格紧凑化 ---- */
+  .data-table {
+    font-size: 12px;
+  }
+  .data-table th,
+  .data-table td {
+    padding: 8px 8px;
+  }
+
+</style>
+
+  <!-- ========== 保存图片功能 ========== -->
+  <style>
+    /* 保存按钮：fixed 定位且位于 .report 容器之外，截图时天然不会被捕获 */
+    .save-image-btn {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 999;
+      padding: 9px 20px;
+      background: var(--claude-primary);
+      color: var(--claude-primary-foreground);
+      border: none;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--claude-font-sans);
+      cursor: pointer;
+      box-shadow: var(--claude-shadow-md);
+      transition: background-color 0.2s ease, transform 0.2s ease;
+    }
+    .save-image-btn:hover {
+      background: var(--claude-brand-400);
+      transform: translateY(-1px);
+    }
+    /* 保存中状态：禁用并提示等待 */
+    .save-image-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+      transform: none;
+    }
+  </style>
+  <button class="save-image-btn" id="saveImageBtn" onclick="saveAsImage()">保存图片</button>
+
+  <!-- ⚠️ 必须使用 html2canvas-pro：原版 html2canvas 1.x 不支持 conic-gradient，
+       会导致「达标率」「参与状态」两个环形图在导出图片中消失 -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js"></script>
+  <script>
+    /**
+     * 将周报卡片保存为单张 PNG 图片
+     *
+     * 实现要点：
+     * 1. 仅捕获 .report 卡片元素，页面其余部分（含保存按钮）不会进入图片
+     * 2. backgroundColor 与页面底色（--claude-bg）一致，避免卡片圆角外露出透明/黑色区域
+     * 3. scale: 2 两倍采样，保证小字号文本与胶囊边缘清晰不模糊
+     * 4. 环形图依赖 conic-gradient，html2canvas-pro 原生支持；胶囊（badge 等）
+     *    按浏览器原生布局绘制，圆角与文字位置与页面一致
+     */
+    function saveAsImage() {
+      const reportEl = document.querySelector('.report');
+      const saveBtn = document.getElementById('saveImageBtn');
+      if (!reportEl) {
+        alert('保存失败：找不到报告内容');
+        return;
+      }
+
+      // 防止重复点击导致重复下载
+      if (saveBtn.disabled) return;
+      if (typeof html2canvas !== 'function') {
+        alert('保存图片暂时失败，请检查网络后重试');
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = '生成中…';
+
+      const options = {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#f5f4ee',
+        logging: false
+      };
+
+      html2canvas(reportEl, options).then(function (canvas) {
+        const link = document.createElement('a');
+        // 文件名与归档期号对齐：<weekStart 年>-issue<NN>-<MM.DD>.png
+        link.download = '{{saveName weekStart issueNo}}';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      }).catch(function (err) {
+        console.error('保存失败:', err);
+        alert('保存失败，请重试');
+      }).finally(function () {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存图片';
+      });
+    }
+  </script>
+
+</body>
+</html>

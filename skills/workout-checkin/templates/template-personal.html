@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人战报 · {{#if rangeStart}}{{rangeStart}} — {{rangeEnd}} · {{/if}}截至第 {{issueNo}} 期</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f5f4ee;
+    font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    color: #3a3733;
+    padding: 20px 8px;
+    display: flex;
+    justify-content: center;
+  }
+  .page { width: 100%; max-width: 964px; }
+
+  /* 两列成员布局 */
+  .members-grid { display: grid; grid-template-columns: 1fr 1fr; }
+  .member-cell { min-width: 0; }
+  .member-wrap { padding: 15px;}
+
+  /* 顶部标题条（数据详情 + 保存全部） */
+  .page-head {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    margin-bottom: 6px; padding: 0 4px;
+  }
+  .btn {
+    font-size: 11px; color: #d97757; border: 0.5px solid #d97757;
+    border-radius: 999px; padding: 3px 14px; cursor: pointer; background: transparent;
+  }
+  .btn:hover { background: #d97757; color: #fff; }
+
+  /* 每个成员卡片顶部的标题条 */
+  .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .card-title { font-size: 13px; font-style: italic; font-weight: 600; font-family: Georgia, serif; line-height: 1.4; }
+
+  /* 成员卡片 */
+  .card {
+    background: #fff; border: 0.5px solid #ece9e0; border-radius: 16px;
+    padding: 16px;
+  }
+
+  /* 头部：头像 + 昵称 + spotlight + 连击（头像与昵称/标签垂直居中） */
+  .card-head { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0; font-family: Georgia, serif;
+  }
+  .avatar-male { background: #5b8db8; }
+  .avatar-female { background: #d98ba0; }
+  .avatar-unknown { background: #d97757; }
+  .head-main { flex: 1; min-width: 0; }
+  .name-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .nickname { font-size: 15px; font-weight: 500; color: #3a3733; font-family: Georgia, serif; }
+  .spotlight-badge {
+    font-size: 11px; background: #ece4f4; color: #7a5fb0; /* 消耗之星 = 紫藤（兜底色） */
+    padding: 2px 8px; border-radius: 999px;
+  }
+  /* ⚠️ html2canvas-pro 导出管线会把克隆 DOM 的 class 名归一为小写：驼峰类名页面正常、导出失效。
+     所有数据驱动的 class 必须模板内 {{lower}} 转小写、CSS 只写小写。数据枚举原值不变。 */
+  /* 每周亮点五类各自配色（与周报 cap-spotlight sp-{type} 一一对应） */
+  .spotlight-badge.sb-recordbreaker { background: #faf3e3; color: #b08a30; } /* 破纪录 = 徽章身份金 */
+  .spotlight-badge.sb-return { background: #eaf3de; color: #5f7d2f; }        /* 回归战士 = 松弛绿 */
+  .spotlight-badge.sb-efficiencystar { background: #fbe9e0; color: #c2572e; } /* 燃效之星 = 燃烧系橙 */
+  .spotlight-badge.sb-progressstar { background: #e6ebf2; color: #3f5a7a; }  /* 进步之星 = 均衡蓝 */
+  .persona-row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .tag-burn { background: #fbe9e0; color: #c2572e; }
+  .tag-balance { background: #e6ebf2; color: #3f5a7a; }
+  .tag-relax { background: #eaf3de; color: #5f7d2f; }
+  .streak-pill {
+    font-size: 11px; background: #f7e7c3; color: #a87b1f;
+    padding: 4px 12px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+    display: inline-block; line-height: 1.4; vertical-align: middle;
+  }
+  .streak-pill.sp-lightgold { background: #fbf6ea; color: #c4a35f; }
+  .streak-pill.sp-darkgold { background: #ecd28c; color: #7c5c10; }
+  .streak-pill.sp-darkgoldglow { background: #e6bd55; color: #6e4f0a; box-shadow: 0 0 8px rgba(214,164,32,0.7); }
+  .streak-pill.sp-legendaryglow {
+    background: linear-gradient(90deg,#f0c14b,#d4a017); color: #fff;
+    box-shadow: 0 0 6px rgba(232,184,75,0.7);
+  }
+  .streak-pill.sp-flamegold {
+    background: linear-gradient(90deg,#f6ae3d,#e8503a); color: #fff;
+    box-shadow: 0 0 8px rgba(232,110,58,0.65);
+  }
+
+  /* 4 周趋势 */
+  .trend-block { margin-top: 12px; }
+  .trend-title {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+  }
+  .trend-title-text { font-size: 12px; color: #6e6d68; font-family: Georgia, serif; }
+  /* 燃效数值：沿用原洞察值的字体/字号/色号（Georgia 17px） */
+  .trend-eff { font-size: 17px; color: #3a3733; font-family: Georgia, serif; }
+  .legend { font-size: 11px; color: #8a857a; }
+  .legend .dot-met { color: #8ca06f; }
+  .legend .dot-miss { color: #c9c6bd; }
+  .legend .dot-leave { color: #c08a3a; }
+  .bars { display: flex; align-items: flex-end; gap: 12px; height: 118px; }
+  .bar-col {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-end; height: 100%;
+  }
+  .bar-val { font-size: 11px; color: #3a3733; }
+  .bar-val.leave { color: #8a857a; }
+  .bar {
+    width: 100%; max-width: 54px; border-radius: 4px 4px 0 0; margin-top: 2px;
+    min-height: 2px;
+  }
+  .bar-met { background: #8ca06f; }
+  .bar-miss { background: #d3d1c7; }
+  .bar-leave { background: #c08a3a; }
+  .bar-label { font-size: 11px; color: #8a857a; margin-top: 5px; }
+  .bar-label.leave { color: #c08a3a; }
+
+  /* 累计里程碑 4 列 */
+  .milestones {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    margin: 12px 0 10px;
+  }
+  .mstone {
+    background: #f1f1ef; border-radius: 8px; padding: 8px 4px; text-align: center;
+  }
+  .mstone-label { font-size: 11px; color: #8a857a; }
+  .mstone-label .unit { font-size: 10px; }
+  .mstone-val { font-size: 16px; color: #3a3733; font-family: Georgia, serif; margin-bottom: 4px; }
+
+  /* 成就墙 3x2 */
+  .wall-title { font-size: 13px; font-weight: 500; color: #3a3733; margin: 12px 0 8px; }
+  .wall { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .badge-cell {
+    border-radius: 8px; padding: 8px; position: relative;
+  }
+  .badge-cell.unlocked { background: #fff; border: 0.5px solid #ece9e0; }
+  .badge-cell.locked { background: #f1f1ef; }
+  .badge-head { display: flex; align-items: center; gap: 5px; }
+  .badge-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .badge-lv { font-size: 12px; font-weight: 500; }
+  .badge-name { font-size: 12px; color: #3a3733; }
+  .badge-cell.locked .badge-lv, .badge-cell.locked .badge-name { color: #9a978e; }
+  .badge-progress { font-size: 12px; color: #8a857a; margin-top: 5px; }
+  .badge-cell.locked .badge-progress { color: #b4b2a9; }
+  .sports-title { font-size: 13px; font-weight: 500; color: #3a3733; margin: 12px 0 8px; }
+  /* 项目分布（弹性网格：项目名列 max-content 自适应最长名，三列轨道对齐） */
+  .sports-rows {
+    display: grid; grid-template-columns: max-content 1fr max-content;
+    column-gap: 8px; row-gap: 7px; align-items: center;
+  }
+  .sport-name { font-size: 11px; color: #6b665c; }
+  .sport-track { height: 6px; background: #f0efe9; border-radius: 999px; overflow: hidden; }
+  .sport-fill { height: 6px; border-radius: 999px; background: #d97757; }
+  .sport-fill-other { background: #d3d1c7; }
+  .sport-count { font-size: 11px; color: #8a857a; text-align: right; }
+
+  /* 数据洞察：纯 AI 分析（全跨度 + 近 4 周双行；硬指标已拆进里程碑与趋势标题） */
+  .insights-title { font-size: 13px; font-weight: 500; color: #3a3733; margin: 12px 0 8px; }
+  .insight-ai {
+    margin-top: 9px; font-size: 11.5px; color: #6b665c; line-height: 1.65;
+    padding-left: 10px; border-left: 2px solid #d97757;
+  }
+  .insight-ai + .insight-ai { margin-top: 5px; border-left-color: #d8d5cb; }
+
+  /* 数据详情弹窗（双列加宽版） */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(58, 55, 51, 0.45);
+    padding: 24px 16px; overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    /* flex 容器内 margin:auto 双向居中；内容超高时仍可滚动，不会被裁顶 */
+    margin: auto;
+    background: #faf9f5; border: 0.5px solid #ece9e0; border-radius: 16px;
+    max-width: 1000px; width: 100%; padding: 15px 20px;
+    box-shadow: 0 12px 40px rgba(58, 55, 51, 0.18);
+  }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .modal-title { font-size: 15px; font-style: italic; color: #d97757; font-family: Georgia, serif; }
+  .modal-close {
+    border: none; background: transparent; font-size: 14px; color: #8a857a;
+    cursor: pointer; padding: 4px 10px; border-radius: 8px;
+  }
+  .modal-close:hover { background: #f1f1ef; color: #3a3733; }
+  .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 20px; }
+  .modal-col-full { grid-column: 1 / -1; }
+  .modal-sec-title { font-size: 13px; font-weight: 500; color: #3a3733; margin-bottom: 10px; }
+
+  /* 左列：成就列表与分层（阶梯可视化：柱高=层级、色深递进、柱下标解锁阈值） */
+  .badge-intro-row {
+    padding: 9px 10px 7px; background: #fff; border: 0.5px solid #ece9e0;
+    border-radius: 8px; margin-bottom: 6px;
+  }
+  .badge-intro-row:last-child { margin-bottom: 0; }
+  .badge-intro-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .badge-intro-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .badge-intro-name { font-size: 12px; font-weight: 500; color: #3a3733; }
+  .badge-intro-unit { font-style: normal; font-weight: 400; font-size: 11px; color: #8a857a; }
+  .tier-steps { display: flex; align-items: flex-end; gap: 3px; height: 36px; }
+  .tier-step { flex: 1; text-align: center; }
+  .tier-bar { border-radius: 3px 3px 0 0; margin: 0 auto; width: 70%; }
+  .tier-val { font-size: 11px; color: #8a857a; margin-top: 3px; line-height: 1; }
+  .badge-intro-note { font-size: 11px; margin-top: 6px; line-height: 1.6; }
+
+  /* 右列：人格标签介绍 + 每周层级介绍 */
+  .persona-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .persona-rule { font-size: 12px; color: #6b665c; line-height: 1.7; }
+  .sport-group { margin-top: 10px; }
+  .sport-group-head { font-size: 11px; color: #8a857a; margin-bottom: 5px; }
+  .sport-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .sport-chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    display: inline-flex; align-items: baseline; gap: 4px;
+  }
+  .sport-chip b { font-weight: 500; }
+  .sport-chip small { font-size: 10px; opacity: 0.75; }
+  .sport-chip.sg-high { background: #fbe9e0; color: #c2572e; }
+  .sport-chip.sg-mid { background: #e6ebf2; color: #3f5a7a; }
+  .sport-chip.sg-low { background: #eaf3de; color: #5f7d2f; }
+  /* 每周亮点介绍（spotlight 徽章口径）：双列网格压缩高度，胶囊复用卡片 .spotlight-badge 样式 */
+  .spot-intro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
+  .spot-intro-row { display: flex; align-items: center; gap: 8px; }
+  .spot-intro-row .spotlight-badge { flex-shrink: 0; min-width: 62px; text-align: center; }
+  .spot-intro-desc { font-size: 11px; color: #6b665c; line-height: 1.5; }
+  .modal-sec-gap { height: 16px; }
+  .tier-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .tier-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; background: #fff; border: 0.5px solid #ece9e0;
+    border-radius: 8px;
+  }
+  .tier-range { font-size: 12px; color: #3a3733; font-family: Georgia, serif; width: 58px; flex-shrink: 0; }
+  .tier-label { font-size: 11px; color: #8a857a; }
+
+  /* 红包账单 */
+  .redpacket-row {
+    display: flex; align-items: center; justify-content: space-between;
+    border-top: 0.5px solid rgba(0,0,0,0.06); padding-top: 12px; margin-top: 12px;
+  }
+  .rp-label { font-size: 12px; color: #888780; }
+  .rp-val { font-size: 14px; font-weight: 500; font-family: Georgia, serif; color: #c05828; }
+
+  /* 累计排行表（截图目标 = .rank-capture，自带四周 15px 边距） */
+  .rank-section { margin-bottom: 16px; }
+  .rank-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; padding: 0 4px;
+  }
+  .rank-title { font-size: 13px; font-style: italic; font-weight: 600; font-family: Georgia, serif; }
+  .rank-hint { font-size: 11px; font-style: normal; font-weight: 400; color: #8a857a; }
+  .rank-capture {
+    background: #fff; border: 0.5px solid #ece9e0; border-radius: 16px;
+    padding: 15px;
+  }
+  .rank-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rank-table th {
+    background: #f1f1ef; color: #6e6d68; font-weight: 500; font-size: 11px;
+    padding: 7px 8px; text-align: left; white-space: nowrap;
+    border-bottom: 0.5px solid #ece9e0; user-select: none;
+  }
+  .rank-table th:last-child { text-align: center; }
+  .rank-table th.sortable { cursor: pointer; }
+  .rank-table th.sortable:hover { color: #3a3733; }
+  .rank-table th.sortable::after { content: '↕'; margin-left: 3px; font-size: 9px; opacity: 0.35; }
+  .rank-table th.sort-asc::after { content: '↑'; color: #d97757; opacity: 1; }
+  .rank-table th.sort-desc::after { content: '↓'; color: #d97757; opacity: 1; }
+  .rank-table td {
+    padding: 7px 8px; text-align: left; vertical-align: middle;
+    border-bottom: 0.5px solid #f0efe9;
+  }
+  .rank-table td:last-child { text-align: center; }
+  .rank-table tbody tr:last-child td { border-bottom: none; }
+  .rank-table tbody tr { transition: background-color 0.15s; }
+  .rank-table tbody tr:hover { background: #faf9f5; }
+  .rank-name-cell { min-width: 0; }
+  .rank-name { font-weight: 500; color: #3a3733; }
+  .rank-name-cell .tag { margin-left: 4px; }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* 保存图片按钮（卡片外） */
+  .save-wrap { text-align: center;}
+  .save-btn {
+    font-size: 12px; color: #d97757; border: 0.5px solid #d97757;
+    border-radius: 999px; padding: 6px 22px; cursor: pointer; background: transparent;
+  }
+  .save-btn:hover { background: #d97757; color: #fff; }
+</style>
+</head>
+<body>
+<div class="page">
+
+
+  {{#if ranking.length}}
+  <!-- 累计排行表：默认按累计消耗降序；表头点击切换升降序；右上角按钮单独保存本表（截图目标 .rank-capture 自带四周 15px 边距） -->
+  <div class="rank-section">
+    <div class="rank-head">
+      <div class="rank-title">累计排行 <span class="rank-hint">· 点击表头排序</span></div>
+      <button class="btn" id="saveRankBtn">保存图片</button>
+    </div>
+    <div class="rank-capture" id="rankCapture">
+      <table class="rank-table" id="rankTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="nickname">昵称</th>
+            <th class="sortable sort-desc" data-key="totalCalories">累计消耗 kcal</th>
+            <th class="sortable" data-key="bestCalories">最高纪录 kcal</th>
+            <th class="sortable" data-key="totalMinutes">累计分钟 min</th>
+            <th class="sortable" data-key="effNum">燃效 kcal/min</th>
+            <th class="sortable" data-key="totalCheckins">累计打卡次数</th>
+            <th class="sortable" data-key="metRate">累计达标</th>
+            <th class="sortable" data-key="streak">连续达标</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each ranking}}
+          <tr data-nickname="{{nickname}}" data-totalcalories="{{totalCalories}}" data-bestcalories="{{bestCalories}}" data-totalminutes="{{totalMinutes}}" data-effnum="{{effNum}}" data-totalcheckins="{{totalCheckins}}" data-metrate="{{metRate}}" data-streak="{{streak}}">
+            <td class="rank-name-cell"><span class="rank-name">{{nickname}}</span>{{#if personaTag}}<span class="tag tag-{{lower personaClass}}"><span class="pill-txt">{{personaTag}}</span></span>{{/if}}</td>
+            <td class="tabular">{{totalCalories}}</td>
+            <td class="tabular">{{bestCalories}}</td>
+            <td class="tabular">{{totalMinutes}}</td>
+            <td class="tabular">{{effText}}</td>
+            <td class="tabular">{{totalCheckins}}</td>
+            <td class="tabular">{{metRate}}%</td>
+            <td>{{#if streakPill}}<span class="streak-pill sp-{{lower streakPill.style}}"><span class="pill-txt">{{#if streakPill.emoji}}{{streakPill.emoji}} {{/if}}连击 {{streakPill.streak}} 周</span></span>{{/if}}</td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{/if}}
+
+  <div class="page-head">
+    <button class="btn" id="detailBtn">数据口径</button>
+    <button class="btn" id="saveAllBtn">保存全部</button>
+  </div>
+  <div class="members-grid">
+  {{#each members}}
+  <div class="member-cell">
+    <div class="member-wrap" id="card-{{nickname}}">
+      <div class="card">
+        <div class="card-title-row">
+          <div class="card-title">个人战报 · {{#if ../rangeStart}}{{../rangeStart}} — {{../rangeEnd}} · {{/if}}截至第 {{../issueNo}} 期</div>
+          {{#if streakPill}}
+          <span class="streak-pill sp-{{lower streakPill.style}}"><span class="pill-txt">{{#if streakPill.emoji}}{{streakPill.emoji}} {{/if}}连击 {{streak}} 周</span></span>
+          {{/if}}
+        </div>
+  
+        <!-- 头部 -->
+        <div class="card-head">
+          <div class="avatar avatar-{{lower genderClass}}">{{firstChar}}</div>
+          <div class="head-main">
+            <div class="name-row">
+              <span class="nickname">{{nickname}}</span>
+              {{#if spotlight}}<span class="spotlight-badge sb-{{lower spotlight.type}}"><span class="pill-txt">本周 · {{spotlight.label}}</span></span>{{/if}}
+            </div>
+            {{#if hasPersona}}
+            <div class="persona-row">
+              {{#each specTags}}<span class="tag tag-{{lower cls}}"><span class="pill-txt">{{nickname}}</span></span>{{/each}}
+              {{#if intensityType}}<span class="tag tag-{{lower intensityClass}}"><span class="pill-txt">{{intensityType}}</span></span>{{/if}}
+            </div>
+            {{/if}}
+          </div>
+        </div>
+  
+        <!-- 最近 4 周趋势 -->
+        <div class="trend-block">
+          <div class="trend-title">
+            <span class="trend-title-text">最近 4 周 · 燃效 <span class="trend-eff" style="color:{{trendEffColor}};">{{effText}}</span> kcal/min</span>
+            <span class="legend"><span class="dot-met">●</span> 达标 <span class="dot-leave">●</span> 请假 <span class="dot-miss">●</span> 未达标</span>
+          </div>
+          <div class="bars">
+            {{#each recentWeeks}}
+            <div class="bar-col">
+              <span class="bar-val {{#if isLeave}}leave{{/if}}">{{caloriesLabel}}</span>
+              <div class="bar bar-{{lower barClass}}" style="height:{{barHeight}}px;"></div>
+              <span class="bar-label {{#if isLeave}}leave{{/if}}">{{minutesLabel}}</span>
+            </div>
+            {{/each}}
+          </div>
+        </div>
+    
+        <!-- 成就墙 -->
+        <div class="wall-title">成就墙</div>
+        <div class="wall">
+          {{#each badges}}
+          <div class="badge-cell {{#if unlocked}}unlocked{{else}}locked{{/if}}">
+            <div class="badge-head">
+              <span class="badge-dot" style="background:{{dotColor}};"></span>
+              <span class="badge-lv" style="color:{{#if unlocked}}{{textColor}}{{else}}#b4b2a9{{/if}};">Lv{{level}} {{name}}</span>
+            </div>
+            <div class="badge-progress">{{current}} / {{nextText}}</div>
+          </div>
+          {{/each}}
+        </div>
+  
+        <!-- 项目分布（网格三列：名称自适应 / 进度条 1fr / 计数右对齐，各行轨道对齐） -->
+        <div class="sports-title">项目分布</div>
+        <div class="sports-rows">
+        {{#each sportsTop}}
+          <span class="sport-name">{{name}}</span>
+          <div class="sport-track"><div class="sport-fill {{#if isOther}}sport-fill-other{{/if}}" style="width:{{barWidth}}%;{{#unless isOther}}opacity:{{barOpacity}};{{/unless}}"></div></div>
+          <span class="sport-count">{{count}}次</span>
+        {{/each}}
+        </div>
+
+        <!-- 累计里程碑 4 列（独立于 AI 洞察，始终渲染；标题仅在 AI 文案存在时显示） -->
+        {{#if aiFull}}<div class="insights-title">数据洞察</div>{{/if}}
+        <div class="milestones">
+          <div class="mstone">
+            <div class="mstone-val">{{totalCalories}}</div>
+            <div class="mstone-label">累计消耗<span class="unit"> kcal</span></div>
+          </div>
+          <div class="mstone">
+            <div class="mstone-val">{{bestCalories}}</div>
+            <div class="mstone-label">最高纪录<span class="unit"> kcal</span></div>
+          </div>
+          <div class="mstone">
+            <div class="mstone-val">{{totalMinutes}}</div>
+            <div class="mstone-label">累计分钟<span class="unit"> min</span></div>
+          </div>
+          <div class="mstone">
+            <div class="mstone-val">{{metRate}}%</div>
+            <div class="mstone-label">累计达标</div>
+          </div>
+        </div>
+        {{#if aiFull}}<div class="insight-ai">{{aiFull}}</div>{{/if}}
+        {{#if aiRecent}}<div class="insight-ai">{{aiRecent}}</div>{{/if}}
+
+        <!-- 红包账单 -->
+        <div class="redpacket-row">
+          <span class="rp-label">累计红包</span>
+          <span class="rp-val">¥{{totalRedPacket}}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="save-wrap">
+      <button class="save-btn" data-card="{{nickname}}">保存图片</button>
+    </div>
+  </div>
+  {{/each}}
+  </div>
+</div>
+
+<!-- 数据详情弹窗（截图目标 .members-grid 之外，不进任何导出图） -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">数据口径说明</div>
+      <button class="modal-close" id="modalClose">✕ 关闭</button>
+    </div>
+
+    <div class="modal-grid">
+      <!-- 左列：成就列表与分层（阶梯可视化） -->
+      <div class="modal-col">
+        <div class="modal-sec-title">成就列表与分层</div>
+        {{#each badgeIntro}}
+        <div class="badge-intro-row">
+          <div class="badge-intro-head">
+            <span class="badge-intro-dot" style="background:{{color}};"></span>
+            <span class="badge-intro-name">{{name}}<i class="badge-intro-unit"> · {{unit}}</i></span>
+          </div>
+          <div class="tier-steps">
+            {{#each steps}}
+            <div class="tier-step">
+              <div class="tier-bar" style="height:{{h}}px; background:{{../color}}; opacity:{{op}};"></div>
+              <div class="tier-val">{{value}}</div>
+            </div>
+            {{/each}}
+          </div>
+          <div class="badge-intro-note" style="color:{{color}};">{{desc}}</div>
+        </div>
+        {{/each}}
+      </div>
+
+      <!-- 右列：人格标签介绍 + 每周层级介绍 -->
+      <div class="modal-col">
+        <div class="modal-sec-title">人格标签介绍</div>
+        <div class="persona-pills">
+          <span class="tag tag-burn"><span class="pill-txt">燃烧系 · 高强度 &gt; 60%</span></span>
+          <span class="tag tag-relax"><span class="pill-txt">松弛系 · 低强度 &gt; 60%</span></span>
+          <span class="tag tag-balance"><span class="pill-txt">均衡系 · 其余情况</span></span>
+        </div>
+        <div class="persona-rule">按全部打卡的强度占比判定分型，三档互斥、先命中先得，介于三者之间显示均衡系；强度档默认按 MET 划分；同一项目累计打卡达到门槛即点亮专精标签。</div>
+        {{#each sportGroups}}
+        <div class="sport-group">
+          <div class="sport-group-head">{{label}} · {{threshold}}</div>
+          <div class="sport-chips">
+            {{#each sports}}<span class="sport-chip sg-{{lower ../key}}"><b>{{nick}}</b><small>{{label}}</small></span>{{/each}}
+          </div>
+        </div>
+        {{/each}}
+
+        <div class="modal-sec-gap"></div>
+        <div class="modal-sec-title">每周亮点介绍</div>
+        <div class="spot-intro-grid">
+          {{#each spotlightIntro}}
+          <div class="spot-intro-row">
+            <span class="spotlight-badge sb-{{lower type}}"><span class="pill-txt">{{label}}</span></span>
+            <span class="spot-intro-desc">{{desc}}</span>
+          </div>
+          {{/each}}
+        </div>
+        <div class="persona-rule" style="margin-top: 8px;">每人每周最多亮 1 颗，同时命中按 破纪录 &gt; 回归战士 &gt; 燃效之星 &gt; 进步之星 &gt; 消耗之星 取最高优先级。</div>
+
+        <div class="modal-sec-gap"></div>
+        <div class="modal-sec-title">每周层级介绍（连击胶囊档位）</div>
+        <div class="tier-grid">
+          {{#each capsuleTiers}}
+          <div class="tier-row">
+            <span class="tier-range">{{range}} 周</span>
+            <span class="streak-pill sp-{{lower style}}"><span class="pill-txt">{{label}}</span></span>
+          </div>
+          {{/each}}
+        </div>
+        <div class="tier-label" style="margin-top: 8px;">👑 传奇金·光晕为皇冠档 · 🔥 火焰金·光晕为最终真金火炼档：连击 30 周起进入，胶囊样式不再变化；成就等级每 +10 周继续提升（40–49 周 Lv6、50–59 周 Lv7…）</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 必须使用 html2canvas-pro（与周报模板同源同版本）：pro 是原版的超集，
+     未来卡片引入 conic-gradient / oklch 等现代特性时无需再换库 -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js"></script>
+<script>
+  /**
+   * 本地时区 YYYY-MM-DD（禁 toISOString：UTC 日期会让东八区零点后倒退一天，
+   * 早上 8 点前保存会得到昨天的文件名）。与脚本侧 fmtDateTime 同一口径。
+   */
+  function localDateStamp() {
+    var d = new Date();
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  /**
+   * 保存实现（与周报模板 saveAsImage 方法统一）：
+   * 1. scale: 2 两倍采样，useCORS 允许外部图片，backgroundColor 与页面底色一致
+   * 2. 防重复点击：生成期间禁用按钮并显示「生成中…」，finally 恢复
+   * 3. 错误处理统一：失败 alert 提示，控制台记录详情
+   */
+  function captureAndDownload(el, filename, btn) {
+    if (!el) {
+      alert('保存失败：找不到目标内容');
+      return;
+    }
+    if (btn && btn.disabled) return;
+    if (typeof html2canvas !== 'function') {
+      alert('保存图片暂时失败，请检查网络后重试');
+      return;
+    }
+    var originalText = btn ? btn.textContent : null;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '生成中…';
+    }
+    html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#f5f4ee',
+      logging: false,
+      onclone: function (doc) {
+        // 胶囊垂直居中补偿：html2canvas-pro 的文字基线计算系统性偏低（约 1.75px @11px 中文），
+        // 仅在导出用的克隆文档里把胶囊文字上移，页面显示完全不受影响。
+        // 覆盖所有胶囊类文字：连击胶囊 / 每周亮点 / 个人标签 / 排行表标签（模板内文字均包 .pill-txt 壳）。
+        // ⚠️ 硬约定：任何胶囊文字必须包 <span class="pill-txt"> 壳（onclone 依赖该类名定位补偿）。
+        doc.querySelectorAll('.pill-txt').forEach(function (t) {
+          t.style.position = 'relative';
+          t.style.top = '-1.75px';
+        });
+      }
+    }).then(function (canvas) {
+      var link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }).catch(function (err) {
+      console.error('保存失败:', err);
+      alert('保存失败，请重试');
+    }).finally(function () {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  }
+
+  // 保存单张卡片
+  document.querySelectorAll('.save-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var nick = btn.getAttribute('data-card');
+      captureAndDownload(
+        document.getElementById('card-' + nick),
+        'workout-personal-' + nick + '-' + localDateStamp() + '.png',
+        btn
+      );
+    });
+  });
+
+  // 保存全部（整页）
+  document.getElementById('saveAllBtn').addEventListener('click', function () {
+    captureAndDownload(
+      document.querySelector('.members-grid'),
+      'workout-personal-all-' + localDateStamp() + '.png',
+      this
+    );
+  });
+
+  // 累计排行：表头点击升降序。首次点击某列：昵称升序、数值列降序（看「谁最多」的直觉）；
+  // 再次点击同一列切换方向。初始序 = 累计消耗降序（服务端渲染序）。
+  // data-* 属性名全小写（HTML 属性大小写不敏感，统一小写避免歧义）。
+  var rankTable = document.getElementById('rankTable');
+  if (rankTable) {
+    var rankBody = rankTable.querySelector('tbody');
+    var RANK_ATTR = {
+      nickname: 'nickname', totalCalories: 'totalcalories',
+      bestCalories: 'bestcalories', totalMinutes: 'totalminutes', effNum: 'effnum',
+      totalCheckins: 'totalcheckins', metRate: 'metrate', streak: 'streak'
+    };
+    var currentSort = { key: 'totalCalories', dir: 'desc' };
+    var sortRank = function (key, dir) {
+      var attr = 'data-' + RANK_ATTR[key];
+      var rows = Array.prototype.slice.call(rankBody.querySelectorAll('tr'));
+      rows.sort(function (a, b) {
+        var va = a.getAttribute(attr);
+        var vb = b.getAttribute(attr);
+        var cmp = key === 'nickname'
+          ? String(va).localeCompare(String(vb), 'zh-CN')
+          : parseFloat(va) - parseFloat(vb);
+        return dir === 'asc' ? cmp : -cmp;
+      });
+      rows.forEach(function (r) { rankBody.appendChild(r); });
+      rankTable.querySelectorAll('th.sortable').forEach(function (th) {
+        var active = th.getAttribute('data-key') === key;
+        th.classList.toggle('sort-asc', active && dir === 'asc');
+        th.classList.toggle('sort-desc', active && dir === 'desc');
+      });
+    };
+    rankTable.querySelectorAll('th.sortable').forEach(function (th) {
+      th.addEventListener('click', function () {
+        var key = th.getAttribute('data-key');
+        if (currentSort.key === key) {
+          currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          currentSort = { key: key, dir: key === 'nickname' ? 'asc' : 'desc' };
+        }
+        sortRank(currentSort.key, currentSort.dir);
+      });
+    });
+
+    // 单独保存排行表（截图目标 .rank-capture 自带四周 15px 边距，与成员卡片保存同源实现）
+    var saveRankBtn = document.getElementById('saveRankBtn');
+    saveRankBtn.addEventListener('click', function () {
+      captureAndDownload(
+        document.getElementById('rankCapture'),
+        'workout-ranking-' + localDateStamp() + '.png',
+        saveRankBtn
+      );
+    });
+  }
+
+  // 数据详情弹窗（打开 / 关闭按钮 / 点遮罩关闭 / Esc 关闭）
+  var modal = document.getElementById('detailModal');
+  document.getElementById('detailBtn').addEventListener('click', function () {
+    modal.classList.add('open');
+  });
+  document.getElementById('modalClose').addEventListener('click', function () {
+    modal.classList.remove('open');
+  });
+  modal.addEventListener('click', function (e) {
+    if (e.target === modal) modal.classList.remove('open');
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') modal.classList.remove('open');
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "groupName": "测试运动群",
+  "issueNo": 1,
+  "weekStart": "2026-10-05",
+  "weekEnd": "2026-10-11",
+  "redPacketTotal": 15,
+  "sportStats": [
+    { "name": "羽毛球", "count": 2 },
+    { "name": "跑步", "count": 1 },
+    { "name": "徒步", "count": 1 }
+  ],
+  "leaveList": [
+    { "nickname": "小芳", "reason": "病假" }
+  ]
+}

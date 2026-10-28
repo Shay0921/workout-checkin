@@ -1,0 +1,189 @@
+{
+  "group": "测试运动群",
+  "weekRule": {
+    "minCheckins": 3,
+    "cycle": "Mon-Sun"
+  },
+  "periodConfig": {
+    "anchorIssue": 1,
+    "anchorWeekStart": "2026-10-05",
+    "anchorWeekEnd": "2026-10-11"
+  },
+  "redPacket": {
+    "zeroOrOne": 10,
+    "two": 5
+  },
+  "leaveKeywords": [
+    "病假",
+    "术后",
+    "头痛",
+    "请假",
+    "身体不适"
+  ],
+  "defaultWeightKg": 60,
+  "convert": {
+    "climbPerFloorMin": 0.4,
+    "kmPerMin": {
+      "游泳": 30,
+      "跑步": 6,
+      "骑行": 3
+    },
+    "minPerCount": {
+      "跳绳": 0.01
+    }
+  },
+  "met": {
+    "自由活动": 3.0,
+    "羽毛球": 7.0,
+    "徒步": 6.0,
+    "自由训练": 3.5,
+    "跑步": 8.0,
+    "力训": 5.0,
+    "爬楼": 8.0,
+    "游泳": 7.0,
+    "散步": 3.5,
+    "跳绳": 11.0,
+    "瑜伽": 2.5,
+    "有氧拳击": 6.0,
+    "爵士舞": 5.0,
+    "跳操": 6.0,
+    "健身环": 5.0,
+    "练背": 4.5,
+    "骑行": 6.8,
+    "核心训练": 4.0
+  },
+  "sportAlias": {
+    "力训": [
+      "力量训练",
+      "深蹲"
+    ],
+    "自由训练": "自由活动",
+    "骑行": "骑车",
+    "跳操": [
+      "有氧操",
+      "健身操"
+    ],
+    "散步": [
+      "步行",
+      "户外散步"
+    ],
+    "健身环": "健身环大冒险"
+  },
+  "sportNickname": {
+    "游泳": "浪里白条",
+    "跑步": "追风者",
+    "跳绳": "绳上飞人",
+    "羽毛球": "羽林好手",
+    "爬楼": "楼宇攀登者",
+    "徒步": "山野行者",
+    "力训": "撸铁狂人",
+    "瑜伽": "柔韧大师",
+    "散步": "街巷行者",
+    "自由活动": "多面手",
+    "自由训练": "多面手"
+  },
+  "badges": {
+    "streak": [
+      3,
+      5,
+      10,
+      20,
+      30
+    ],
+    "fatBurner": [
+      1000,
+      3000,
+      5000,
+      8000,
+      10000
+    ],
+    "ironMan": [
+      50,
+      100,
+      150,
+      200,
+      250,
+      300
+    ],
+    "allRound": [
+      5,
+      10,
+      15
+    ],
+    "resident": [
+      4,
+      8,
+      16,
+      32,
+      64,
+      100
+    ],
+    "selfDiscipline": [
+      4,
+      8,
+      16,
+      32,
+      64,
+      100
+    ]
+  },
+  "members": [
+    {
+      "nickname": "阿明",
+      "aliases": [
+        "阿明~"
+      ],
+      "status": "active",
+      "weightKg": 70
+    },
+    {
+      "nickname": "小芳",
+      "aliases": [],
+      "status": "active",
+      "weightKg": 50
+    },
+    {
+      "nickname": "老王",
+      "aliases": [],
+      "status": "active"
+    },
+    {
+      "nickname": "Huahua",
+      "aliases": [],
+      "status": "active",
+      "weightKg": 55
+    },
+    {
+      "nickname": "小刘",
+      "aliases": [],
+      "status": "active",
+      "weightKg": 55
+    },
+    {
+      "nickname": "小周",
+      "aliases": [],
+      "status": "active",
+      "weightKg": 47
+    },
+    {
+      "nickname": "小张",
+      "aliases": [
+        "小张🍀"
+      ],
+      "status": "active",
+      "weightKg": 60
+    },
+    {
+      "nickname": "退群的人",
+      "aliases": [],
+      "status": "left",
+      "weightKg": 60
+    }
+  ],
+  "intensityOverride": {
+    "力训": "high",
+    "骑行": "high",
+    "爬楼": "mid",
+    "跳绳": "mid"
+  }
+}

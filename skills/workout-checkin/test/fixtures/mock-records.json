@@ -1,0 +1,21 @@
+{
+  "weekStart": "2026-10-12",
+  "records": [
+    { "nickname": "阿明~", "ordinal": 1, "sport": "羽毛球", "quantity": 1.5, "unit": "h" },
+    { "nickname": "阿明~", "ordinal": 1, "sport": "力量训练", "quantity": 30, "unit": "min" },
+    { "nickname": "阿明~", "ordinal": 2, "sport": "跑步", "quantity": 25, "unit": "min" },
+    { "nickname": "阿明~", "ordinal": 3, "sport": "游泳", "quantity": 0.8, "unit": "km" },
+    { "nickname": "小芳", "ordinal": 1, "sport": "跳绳", "quantity": 20, "unit": "min" },
+    { "nickname": "小芳", "ordinal": 1, "sport": "跳绳", "quantity": 20, "unit": "min" },
+    { "nickname": "小芳", "ordinal": 2, "sport": "羽毛球", "quantity": 1, "unit": "h" },
+    { "nickname": "小芳", "ordinal": 3, "sport": "瑜伽", "quantity": 40, "unit": "min" },
+    { "nickname": "老王", "ordinal": 1, "sport": "爬楼", "quantity": 33, "unit": "floor" },
+    { "nickname": "老王", "ordinal": 2, "sport": "散步", "quantity": 30, "unit": "min" },
+    { "nickname": "老王", "ordinal": 3, "sport": "自由活动", "quantity": 46, "unit": "min" },
+    { "nickname": "Huahua", "ordinal": null, "sport": "羽毛球", "quantity": 2, "unit": "h" },
+    { "nickname": "小周", "ordinal": 1, "sport": "跑步", "quantity": 10, "unit": "min" }
+  ],
+  "leaves": [
+    { "nickname": "小刘", "reason": "病假" }
+  ]
+}

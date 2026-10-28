@@ -1,0 +1,446 @@
+{
+  "groupName": "运动打卡群",
+  "issueNo": 2,
+  "weekStart": "2026-10-12",
+  "weekEnd": "2026-10-18",
+  "generatedAt": "2026-10-19 20:30",
+  "minCheckins": 3,
+  "totalMembers": 10,
+  "metCount": 3,
+  "notMetCount": 7,
+  "targetRate": 30,
+  "targetRateAngle": 108,
+  "checkinCount": 5,
+  "checkinPercent": 50,
+  "checkinAngle": 180,
+  "leaveCount": 2,
+  "leavePercent": 20,
+  "leaveAngle": 72,
+  "absentCount": 3,
+  "absentPercent": 30,
+  "absentAngle": 108,
+  "redPacketTotal": 40,
+  "redPacketTrendText": "较上期 −¥40",
+  "sportStats": [
+    {
+      "name": "羽毛球",
+      "count": 4,
+      "minutes": 160,
+      "calories": 1120,
+      "kcalPerMin": 7,
+      "barWidthPercent": 100,
+      "barOpacity": 1
+    },
+    {
+      "name": "跑步",
+      "count": 3,
+      "minutes": 135,
+      "calories": 1080,
+      "kcalPerMin": 8,
+      "barWidthPercent": 75,
+      "barOpacity": 0.92
+    },
+    {
+      "name": "力训",
+      "count": 2,
+      "minutes": 110,
+      "calories": 660,
+      "kcalPerMin": 6,
+      "barWidthPercent": 50,
+      "barOpacity": 0.84
+    },
+    {
+      "name": "徒步",
+      "count": 1,
+      "minutes": 90,
+      "calories": 540,
+      "kcalPerMin": 6,
+      "barWidthPercent": 25,
+      "barOpacity": 0.76
+    },
+    {
+      "name": "散步",
+      "count": 1,
+      "minutes": 60,
+      "calories": 210,
+      "kcalPerMin": 3.5,
+      "barWidthPercent": 25,
+      "barOpacity": 0.68
+    },
+    {
+      "name": "游泳",
+      "count": 1,
+      "minutes": 75,
+      "calories": 600,
+      "kcalPerMin": 8,
+      "barWidthPercent": 25,
+      "barOpacity": 0.6
+    }
+  ],
+  "hasOtherSports": true,
+  "otherSportCount": 2,
+  "otherSportTotal": 2,
+  "otherBarWidthPercent": 50,
+  "checkinList": [
+    {
+      "nickname": "阿明",
+      "totalMinutes": 267,
+      "totalCalories": 1585,
+      "loadScore": 1585,
+      "checkinCount": 4,
+      "statusClass": "success",
+      "gapText": "达标",
+      "streak": 2,
+      "streakCapsule": {
+        "streak": 2,
+        "style": "lightGold",
+        "isLegendary": false,
+        "emoji": null
+      },
+      "spotlight": {
+        "type": "recordBreaker",
+        "label": "破纪录"
+      },
+      "personaTag": "追风者",
+      "personaClass": "burn"
+    },
+    {
+      "nickname": "小芳",
+      "totalMinutes": 249,
+      "totalCalories": 1754,
+      "loadScore": 1754,
+      "checkinCount": 3,
+      "statusClass": "success",
+      "gapText": "达标",
+      "streak": 2,
+      "streakCapsule": {
+        "streak": 2,
+        "style": "lightGold",
+        "isLegendary": false,
+        "emoji": null
+      },
+      "spotlight": null,
+      "personaTag": "浪里白条",
+      "personaClass": "burn"
+    },
+    {
+      "nickname": "老王",
+      "totalMinutes": 110,
+      "totalCalories": 535,
+      "loadScore": 535,
+      "checkinCount": 3,
+      "statusClass": "success",
+      "gapText": "达标",
+      "streak": 1,
+      "streakCapsule": null,
+      "spotlight": null,
+      "personaTag": "松弛系",
+      "personaClass": "relax"
+    },
+    {
+      "nickname": "小张",
+      "totalMinutes": 70,
+      "totalCalories": 570,
+      "loadScore": 570,
+      "checkinCount": 2,
+      "statusClass": "warning",
+      "gapText": "差 1 次",
+      "streak": 0,
+      "streakCapsule": null,
+      "spotlight": {
+        "type": "efficiencyStar",
+        "label": "燃效之星"
+      },
+      "personaTag": null,
+      "personaClass": null
+    },
+    {
+      "nickname": "小李",
+      "totalMinutes": 60,
+      "totalCalories": 300,
+      "loadScore": 300,
+      "checkinCount": 2,
+      "statusClass": "warning",
+      "gapText": "差 1 次",
+      "streak": 0,
+      "streakCapsule": null,
+      "spotlight": null,
+      "personaTag": null,
+      "personaClass": null
+    },
+    {
+      "nickname": "孙八",
+      "totalMinutes": 0,
+      "totalCalories": 0,
+      "checkinCount": 0,
+      "statusClass": "danger",
+      "gapText": "未打卡",
+      "streak": 0,
+      "streakCapsule": null,
+      "spotlight": null,
+      "personaTag": null,
+      "personaClass": null
+    },
+    {
+      "nickname": "周九",
+      "totalMinutes": 0,
+      "totalCalories": 0,
+      "checkinCount": 0,
+      "statusClass": "danger",
+      "gapText": "未打卡",
+      "streak": 0,
+      "streakCapsule": null,
+      "spotlight": null,
+      "personaTag": null,
+      "personaClass": null
+    },
+    {
+      "nickname": "吴十",
+      "totalMinutes": 0,
+      "totalCalories": 0,
+      "checkinCount": 0,
+      "statusClass": "danger",
+      "gapText": "未打卡",
+      "streak": 0,
+      "streakCapsule": null,
+      "spotlight": null,
+      "personaTag": null,
+      "personaClass": null
+    }
+  ],
+  "totalMinutesSum": 756,
+  "totalCaloriesSum": 4744,
+  "totalSessions": 14,
+  "avgMinutesPerSession": 54,
+  "leaveList": [
+    {
+      "nickname": "赵六",
+      "reason": "病假"
+    },
+    {
+      "nickname": "钱七",
+      "reason": "事假"
+    }
+  ],
+  "redPacketTiers": [
+    {
+      "tier": "¥10 · 差 2 次或未打卡",
+      "peopleCount": 3,
+      "amount": 30,
+      "nameList": "孙八、周九、吴十"
+    },
+    {
+      "tier": "¥5 · 差 1 次",
+      "peopleCount": 2,
+      "amount": 10,
+      "nameList": "小张、小李"
+    }
+  ],
+  "totalPeople": 5,
+  "insights": [
+    {
+      "title": "达标快报",
+      "content": "达标只到 3 人，卡点清一色是差 1 次——小张和小李各差一次，不是没练，是练得不够密。"
+    },
+    {
+      "title": "趋势解读",
+      "content": "这周热闹在项目铺开，不在单次练得更久——跑步首次上榜，人均单次 54 分钟仍没抬起来。"
+    },
+    {
+      "title": "强度观察",
+      "content": "燃效是跑步和游泳撑起来的（都到 8），散步 3.5 在往下拉——高强度人次刚过半。"
+    },
+    {
+      "title": "连击动态",
+      "content": "小张此前 1 连击，本周中断，下周重启可再续"
+    },
+    {
+      "title": "项目版图",
+      "content": "版图铺到 8 种，可除前三以外其余 5 种各只 1 人次——宽度上去了，厚度还压在羽毛球和跑步上。"
+    },
+    {
+      "title": "能量账本",
+      "content": "奶茶 12 杯大杯全糖，分到 5 个人头上每人两杯半——练得不算猛，胜在没断。"
+    },
+    {
+      "title": "红包入池",
+      "content": "红包池第一次往下走（¥80 → ¥40），罚款人数回到 5 人——面收窄了，账本却还在。"
+    }
+  ],
+  "returnWelcome": {
+    "initial": "阿",
+    "nickname": "阿明",
+    "message": "上周请假，本周回归打卡 267 分钟，欢迎回来！"
+  },
+  "calorieKing": {
+    "nickname": "小芳",
+    "kcal": 1754
+  },
+  "efficiencyStar": {
+    "nickname": "小张",
+    "avgMet": 8.1
+  },
+  "progressStar": null,
+  "milestoneCelebrations": [
+    {
+      "nickname": "阿明",
+      "badge": "fatBurner",
+      "label": "燃脂狂魔",
+      "level": 2,
+      "value": 3169,
+      "unit": "kcal"
+    }
+  ],
+  "streakBreaks": [
+    {
+      "nickname": "小张",
+      "brokenStreak": 1,
+      "wasTopStreak": false,
+      "newTop": {
+        "nickname": "小芳",
+        "streak": 2
+      }
+    }
+  ],
+  "spotlights": {
+    "阿明": {
+      "type": "recordBreaker",
+      "label": "破纪录"
+    },
+    "小张": {
+      "type": "efficiencyStar",
+      "label": "燃效之星"
+    }
+  },
+  "cumulative": {
+    "group": {
+      "issueCount": 2,
+      "totalCheckins": 28,
+      "totalMinutes": 1512,
+      "totalCalories": 9488,
+      "totalRedPacket": 120,
+      "totalMetWeeks": 6,
+      "efficiencyStarStreak": {
+        "nickname": "小张",
+        "weeks": 1
+      },
+      "calorieKingStreak": {
+        "nickname": "小芳",
+        "weeks": 2
+      }
+    },
+    "members": {
+      "阿明": {
+        "streak": 2,
+        "bestStreak": 2,
+        "attendanceStreak": 2,
+        "metWeeks": 2,
+        "totalCheckins": 7,
+        "totalMinutes": 509,
+        "totalCalories": 3169,
+        "bestCalories": 1585,
+        "totalRedPacket": 0,
+        "sports": {
+          "羽毛球": 3,
+          "跑步": 2,
+          "徒步": 1,
+          "瑜伽": 1
+        },
+        "lastStatus": "met",
+        "recentWeeks": [
+          {
+            "issue": 1,
+            "minutes": 242,
+            "calories": 1584,
+            "checkins": 3,
+            "status": "met",
+            "redPacket": 0
+          },
+          {
+            "issue": 2,
+            "minutes": 267,
+            "calories": 1585,
+            "checkins": 4,
+            "status": "met",
+            "redPacket": 0
+          }
+        ]
+      },
+      "小张": {
+        "streak": 0,
+        "bestStreak": 1,
+        "attendanceStreak": 2,
+        "metWeeks": 1,
+        "totalCheckins": 5,
+        "totalMinutes": 150,
+        "totalCalories": 1140,
+        "bestCalories": 570,
+        "totalRedPacket": 5,
+        "sports": {
+          "跑步": 3,
+          "跳绳": 2
+        },
+        "lastStatus": "partial",
+        "recentWeeks": [
+          {
+            "issue": 1,
+            "minutes": 80,
+            "calories": 570,
+            "checkins": 3,
+            "status": "met",
+            "redPacket": 0
+          },
+          {
+            "issue": 2,
+            "minutes": 70,
+            "calories": 570,
+            "checkins": 2,
+            "status": "partial",
+            "redPacket": 5
+          }
+        ]
+      }
+    }
+  },
+  "metSnapshot": {
+    "met": {
+      "自由活动": 4.5,
+      "羽毛球": 7,
+      "徒步": 6,
+      "爬山": 6.9,
+      "自由训练": 4.5,
+      "跑步": 8,
+      "力训": 6,
+      "爬楼": 6.9,
+      "游泳": 8,
+      "散步": 3.5,
+      "快走": 4.3,
+      "跳绳": 6.9,
+      "瑜伽": 4,
+      "有氧拳击": 7.5,
+      "爵士舞": 7,
+      "跳操": 6,
+      "健身环": 4.5,
+      "练背": 3,
+      "骑行": 6.8,
+      "核心训练": 5,
+      "拉伸": 2.3,
+      "普拉提": 4.5,
+      "养生操": 2.8,
+      "滑雪": 6,
+      "滑冰": 5.5,
+      "滑板": 5
+    },
+    "convert": {
+      "climbPerFloorMin": 0.4,
+      "kmPerMin": {
+        "游泳": 30,
+        "跑步": 6,
+        "骑行": 3
+      },
+      "minPerCount": {
+        "跳绳": 0.01
+      }
+    }
+  }
+}

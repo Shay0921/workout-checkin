@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# 依赖（本 skill 零依赖，理论上不会出现；防手滑）
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# 运行时产物（正常生成在各自工作区，防误放 skill 目录内）
+records.json
+data.json
+reports/
+personal-insights.json
+*.auto.png
+
+# 私有配置：真实群成员信息，绝不入库（首次使用时由 Step 2.5 初始化生成）
+members.json
+
+# 编辑器 / 环境
+.env
+.env.*
+*.log
+.idea/
+.vscode/
