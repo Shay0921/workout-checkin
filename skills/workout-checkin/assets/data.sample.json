@@ -315,6 +315,7 @@
   "cumulative": {
     "group": {
       "issueCount": 2,
+      "firstWeekStart": "2026-10-05",
       "totalCheckins": 28,
       "totalMinutes": 1512,
       "totalCalories": 9488,
@@ -335,6 +336,7 @@
         "bestStreak": 2,
         "attendanceStreak": 2,
         "metWeeks": 2,
+        "presentWeeks": 2,
         "totalCheckins": 7,
         "totalMinutes": 509,
         "totalCalories": 3169,
@@ -371,6 +373,7 @@
         "bestStreak": 1,
         "attendanceStreak": 2,
         "metWeeks": 1,
+        "presentWeeks": 2,
         "totalCheckins": 5,
         "totalMinutes": 150,
         "totalCalories": 1140,

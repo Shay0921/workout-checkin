@@ -44,6 +44,7 @@ import {
   streakCapsule,
 } from './cumulative.mjs';
 import { buildNicknameIndex, canonicalName, normalizeName } from './nickname.mjs';
+import { loadHistory, buildPresenceIndex } from './archive.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const LEGACY_MEMBERS_PATH = resolve(SCRIPT_DIR, '../members.json');
@@ -249,6 +250,47 @@ export function attachDeltaBadges(checkinList, prevCumulative) {
     row.deltaClass = delta > 0 ? 'up' : 'down';
   }
   return checkinList;
+}
+
+// ---------- 旧归档字段迁移 ----------
+
+/**
+ * 上期归档缺哪个链式字段：`presentWeeks`（在册期数，达标率分母）/ `group.firstWeekStart`（标题区间起点）。
+ * 必须拿「原始归档」判断：canonicalizeCumulative 会把缺失的 presentWeeks 补成 0，补完就分辨不出来了。
+ * 缺 presentWeeks 不补 → 老成员被当成「本期才入群」（从 1 起），达标率被系统性抬高；
+ * 缺 firstWeekStart 不补 → 记成本期日期，区间起点从此永久错位。
+ * @param {object|null} foundPrevReport findPrevReport 的原始结果（未经 canonicalize）
+ * @returns {string[]|null} 缺失字段名数组；无需迁移时 null
+ */
+export function findArchiveMigrationGaps(foundPrevReport) {
+  if (!foundPrevReport) return null;
+  const cumulative = foundPrevReport.cumulative;
+  // 归档整块没有 cumulative（手改坏 / 更早的格式）：两个字段都只能靠扫描重建
+  if (!cumulative) return ['presentWeeks', 'group.firstWeekStart'];
+  const gaps = [];
+  const members = cumulative.members;
+  if (!members || Object.values(members).some((m) => !Number.isFinite(m?.presentWeeks))) gaps.push('presentWeeks');
+  if (!cumulative.group?.firstWeekStart) gaps.push('group.firstWeekStart');
+  return gaps.length > 0 ? gaps : null;
+}
+
+/**
+ * 迁移扫描：算出「截至上期」每人在册期数（= 本人第几期）与群首期 weekStart。
+ * 与 personal.mjs 共用 archive.mjs 的 loadHistory + buildPresenceIndex，不另立口径。
+ * 只在上期归档缺字段时调用；补齐写进本期归档后，后续全走链式累加。
+ *
+ * @param {string} reportsDir 归档目录
+ * @param {Map<string,string>} nicknameIndex 昵称归一键
+ * @param {number} prevIssueNo 上期期号（只统计到这一期，避免重跑时把已写出的本期归档也算进去）
+ * @returns {{baseline: Map<string, number>, firstWeekStart: string|null, scannedIssues: number}}
+ */
+export function scanArchiveBaseline(reportsDir, nicknameIndex, prevIssueNo) {
+  const issues = loadHistory(reportsDir).filter((it) => it.issueNo <= prevIssueNo);
+  return {
+    baseline: buildPresenceIndex(issues, nicknameIndex),
+    firstWeekStart: issues[0]?.weekStart || null,
+    scannedIssues: issues.length,
+  };
 }
 
 // ---------- 上期归档定位 ----------
@@ -1005,7 +1047,29 @@ function main() {
   // 5.5 链式累计 cumulative + spotlight + metSnapshot（不动 buildStats 函数体）
   const memberStats = data.memberStats;
   const prevCumulative = prevReport?.cumulative || null;
-  const cumulative = buildCumulative({ prevCumulative, memberStats, config, issueNo });
+  // presentWeeks 迁移：上期归档由旧版 calc 生成时没有这个字段，直接按 0 起链会把老成员
+  // 全当成本期新入群（每人 presentWeeks=1），达标率被系统性抬高 → 先扫归档补一次历史基线。
+  // 缺哪个补哪个：在册基线只在缺 presentWeeks 时才覆盖链式值——归档本身缺期时扫描值偏小，
+  // 无条件覆盖会把本来正确的在册期数腰斩。判断一律用原始归档 foundPrevReport。
+  const migrationGaps = findArchiveMigrationGaps(foundPrevReport);
+  const archiveBaseline = migrationGaps ? scanArchiveBaseline(reportsDir, nicknameIndex, issueNo - 1) : null;
+  if (migrationGaps) {
+    const short = archiveBaseline.scannedIssues < issueNo - 1
+      ? `（归档只有 ${archiveBaseline.scannedIssues} 期，基线可能偏小，请确认归档是否缺失）`
+      : '';
+    console.warn(
+      `⚠ 上期归档缺 ${migrationGaps.join(' 与 ')}：已扫 ${archiveBaseline.scannedIssues} 期归档补齐${short}`
+    );
+  }
+  const cumulative = buildCumulative({
+    prevCumulative,
+    memberStats,
+    config,
+    issueNo,
+    presentBaseline: migrationGaps?.includes('presentWeeks') ? archiveBaseline.baseline : null,
+    firstWeekStart: migrationGaps?.includes('group.firstWeekStart') ? archiveBaseline.firstWeekStart : null,
+    weekStart: weekWindow.weekStart,
+  });
   const spotlights = computeSpotlights({ memberStats, prevCumulative });
   const metSnapshot = buildMetSnapshot(config);
   const milestoneCelebrations = computeMilestoneCelebrations({ cumulative, prevCumulative, config });

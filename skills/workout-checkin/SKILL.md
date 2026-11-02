@@ -28,6 +28,7 @@ description: "运动打卡接龙生成周报，当用户想回顾运动群一周
 | `scripts/calc.mjs` | **计算脚本（唯一计算真源）**：读 records.json + members.json + 上期归档 → 输出 data.json（insights 留空由 AI 补写）。期号判定、归一化、换算、卡路里、红包档位、排序、趋势、累计全在此 |
 | `scripts/cumulative.mjs` | 累计快照共享层（纯函数，被 calc 与 personal 共同 import）：链式累计、徽章层级、人格标签、本周之星、spotlight、里程碑、连击胶囊 |
 | `scripts/nickname.mjs` | 昵称归一/别名索引：records 与历史归档的 cumulative 共用同一套映射，改名后历史累计按同一人接续 |
+| `scripts/archive.mjs` | 归档扫描共享层：`loadHistory` / `buildPresenceIndex` / `resolvePresentWeeks`，calc 与 personal 共用同一套在册口径 |
 | `scripts/render.mjs` | 渲染脚本：校验字段 + insights 契约 → Handlebars 渲染 → 残留占位符检查 → 输出 HTML 并自动写同名归档 .json |
 | `scripts/personal.mjs` | 个人战报生成脚本：渲染读最新一期归档的 cumulative，每人一节（`--name` 单人）；`--digest` 只打印历史速览供 AI 写双行分析 |
 | `scripts/shot.mjs` | **自动出图（Step 5）**：复用本机 Chrome 无头截取周报 `.report` → `reports/<年>-issue<NN>.auto.png`（与页面「保存图片」同尺寸）；只在无头页面里临时隐藏按钮，不改 HTML；找不到浏览器时回退手动保存 |
@@ -213,8 +214,10 @@ node <skill目录>/scripts/personal.mjs <工作区>/reports --digest
 node <skill目录>/scripts/personal.mjs <工作区>/reports [--name 昵称] [-o 输出.html]
 ```
 
-- `--digest` 为拿逐期序列由脚本扫全部归档（一两秒、AI 零 token）；渲染路径仍只读**最新一期归档**的 cumulative（链式累计已内嵌：累计消耗/时长、达标期数、项目人次、连击、近 4 周）。**禁止自己读归档 JSON，也禁止心算任何平均值**
+- `--digest` 为拿逐期序列由脚本扫全部归档（一两秒、AI 零 token）；渲染路径只读**最新一期归档**的 cumulative（链式累计已内嵌：累计消耗/时长、达标期数、**在册期数 presentWeeks**、**首期日期 firstWeekStart**、项目人次、连击、近 4 周）。**禁止自己读归档 JSON，也禁止心算任何平均值**
 - **正常交付永远是全员报告**；`--name` 只在补写/补渲染某一人时用，不是另一种交付形态
+- **累计达标率的分母 = 个人在册期数**（本人入群后才开始计），不是群总期数——新人第 3 期入群、后两期全达标 = 100%，而不是 2/4 = 50%。这个量是 `cumulative.members[昵称].presentWeeks`，由 calc 每期 **+1 链式累加**（入群那期 = 1），与 `metWeeks` 同源。**在册 = 当期为 `members.json` 里 `status: "active"` 的成员**，与本周表现无关：达标、未达标、整周请假、0 打卡缺席**一律 +1**——分母是「他应当被考核的期数」，不是「他表现好的期数」；只有还没入群、或已退群期间的期数不计（退群期间断开，再回来从 1 重新计）。**速览行的 `达标M/N` 与页面「累计达标」百分比由同一个解析器算出**（链式优先、缺字段才扫归档兜底），不会出现两个分母；兜底扫描之所以等于 active 名单口径，是因为 calc 每期必然把全部 active 成员写进归档名单（见 `scripts/archive.mjs` 顶部注）
+- **渲染路径不读往期归档**：`presentWeeks` 与 `group.firstWeekStart`（标题区间起点）都在最新一期 cumulative 里，personal.mjs 只读最新归档 + 侧车
 - 产物 `reports/<年>-issue<NN>-personal.html`，内容与版式由 `templates/template-personal.html` 决定——**不需要预知页面结构**
 
 **AI 双行分析（必写）**：动笔前读 `<skill目录>/references/insight-writing.md` §2–3——双行骨架与数字来源（§2.2）、速览行尾 `▸` 主论点证据的用法（§2.3，照用不重排）、侧车契约（§2.1）全在该文档，以它为准。侧车须覆盖全部目标成员，覆盖不全时 personal.mjs 打印 ⚠（含名单），见到必须补写后重跑。
@@ -224,6 +227,7 @@ node <skill目录>/scripts/personal.mjs <工作区>/reports [--name 昵称] [-o 
 - **首期运行**：无上期归档 → calc 自动兜底（`redPacketTrendText` =「首期 · 暂无对比」、`returnWelcome` = null）
 - **全员达标/请假**：`redPacketTiers` 为空数组、`totalPeople: 0`（模板空表格正常显示合计行）
 - **重复贴/修改贴**：calc 按（昵称, 次数, 项目）三元组自动去重（时长相同）或合并（时长不同），并打印警告
+- **成员退群**：`members.json` 里 `status` 改 `left`，此后不进统计与红包，新归档也不再写入他的累计（旧归档原样保留，回来按新人重算）。**必须等他最后一次打卡那期跑完并归档后再改**——当期接龙里还有他，calc 会按「未知昵称」整期报错
 - **部分请假（`times`）的判定结果**：打卡已够线 →「达标」（不注请假）；打卡不足但打卡 + 请假 ≥ 达标线 →「达标+N请假」；有效次数不足 →「差 N 次」，红包按有效次数走档；0 打卡且请假 ≥ 达标线 → 等同整周豁免（进请假名单 ¥0）；**0 打卡且非整周豁免 → 一律计入未打卡人数**（名单显示「差 N 次」或「未打卡」）。打卡 / 请假 / 未打卡三档人数之和恒等于群总人数
 - **接龙出现 MET 表外的新项目**（如桨板、攀岩）：`resolveSport` 在 `met` 与 `sportAlias` 均未命中即报「未知运动」，整期不产出，**禁止猜测 MET**。处理流程：
   1. 把新项目报给用户，共同确定项目名与常见写法、MET 值（拿不准参照 Compendium：休闲滑雪≈6.0、滑冰≈5.5、滑板≈5.0）、专精昵称

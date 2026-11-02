@@ -21,6 +21,7 @@ const base = (nickname, over = {}) => ({
   totalCheckins: 20,
   met: 5,
   total: 10,
+  seriesLength: 10,
   streak: 2,
   avg: 300,
   rank: 5,
@@ -105,7 +106,7 @@ test('变化证据门槛：偏离不足 10% 不算变化；近 4 期已走高时
   assert.equal(changeCandidates(base('x', { recentAvg: 105 })).length, 0);
   // 峰值就落在近 4 期里 → 与「近 4 期走高」是同一个故事的两种说法，只报一次
   const c = changeCandidates(
-    base('x', { recentAvg: 130, peakAge: 0, peakCalories: 900, peakText: '#17 900', total: 17 })
+    base('x', { recentAvg: 130, peakAge: 0, peakCalories: 900, peakText: '#17 900', seriesLength: 17 })
   );
   assert.equal(c.length, 1, '同一故事不该占两个变化名额');
   assert.equal(c[0].type, 'move');
@@ -159,13 +160,13 @@ test('driftOf 是「近 4 期 vs 全程周均」的单一真源', () => {
   assert.equal(driftOf(base('x', { recentBase: 1 })), 0);
 });
 
-test('首期归档（total=1）不把「峰值」当刷新：没有上期可比', () => {
-  const c = changeCandidates(base('x', { peakAge: 0, peakCalories: 500, peakText: '#01 500', total: 1 }));
+test('首期归档（seriesLength=1）不把「峰值」当刷新：没有上期可比', () => {
+  const c = changeCandidates(base('x', { peakAge: 0, peakCalories: 500, peakText: '#01 500', seriesLength: 1 }));
   assert.equal(c.length, 0);
-  const c2 = changeCandidates(base('x', { peakAge: 0, peakCalories: 500, peakText: '#17 500', total: 17 }));
+  const c2 = changeCandidates(base('x', { peakAge: 0, peakCalories: 500, peakText: '#17 500', seriesLength: 17 }));
   assert.equal(c2[0].type, 'peak');
-  // 峰值就是全史第一期（peakAge=1、total=2）时同样无「刷新」可言
-  const c3 = changeCandidates(base('x', { peakAge: 1, peakCalories: 500, peakText: '#01 500', total: 2 }));
+  // 峰值就是全史第一期（peakAge=1、seriesLength=2）时同样无「刷新」可言
+  const c3 = changeCandidates(base('x', { peakAge: 1, peakCalories: 500, peakText: '#01 500', seriesLength: 2 }));
   assert.equal(c3.length, 0);
 });
 

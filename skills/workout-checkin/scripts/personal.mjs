@@ -20,6 +20,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assignAngles } from './angle.mjs';
 import { normalizeNickname } from './calc.mjs';
+// 归档扫描（逐期名单 / 在册期数）与 calc 共用同一份实现：口径只许有一处
+import { loadHistory, buildPresenceIndex, resolvePresentWeeks } from './archive.mjs';
 import { findSkeletonDuplicates } from './text-lint.mjs';
 import {
   canonicalizeCumulative,
@@ -170,7 +172,7 @@ function buildSportGroups(config) {
 }
 
 /** 构建单个成员的视图数据 */
-function buildMemberView({ cum, member, config, issueNo, issueCount, spotlights, aiNotes }) {
+function buildMemberView({ cum, member, config, presentWeeks, spotlights, aiNotes }) {
   const persona = computePersona({ sports: cum.sports, config });
 
   // 专精标签（最多 4 颗，按各自强度档配色：high→burn / mid→balance / low→relax）
@@ -254,7 +256,9 @@ function buildMemberView({ cum, member, config, issueNo, issueCount, spotlights,
 
   // 数据洞察 = 纯 AI 分析（full 全程 + recent 近 4 周，侧车 personal-insights.json）；硬指标已拆解进里程碑与趋势标题
   const eff = cum.totalMinutes > 0 ? cum.totalCalories / cum.totalMinutes : 0;
-  const metRate = issueCount > 0 ? Math.round((cum.metWeeks / issueCount) * 100) : 0;
+  // 达标率分母 = 在册期数（口径与兜底见 resolvePresentWeeks），不是全群期数：
+  // 新成员入群前的期数不算他缺勤，否则「入群 2 期全达标」会被算成 50%
+  const metRate = presentWeeks > 0 ? Math.round((cum.metWeeks / presentWeeks) * 100) : 0;
 
   return {
     nickname: member.nickname,
@@ -284,67 +288,6 @@ function buildMemberView({ cum, member, config, issueNo, issueCount, spotlights,
     aiRecent: aiNotes?.[member.nickname]?.recent || null,
     totalRedPacket: cum.totalRedPacket,
   };
-}
-
-/**
- * 读取归档目录全部期号，构建逐期时间线（按 issueNo 升序）
- *
- * 数据来源：每期归档的 checkinList（打卡者）+ leaveList（请假者，不在 checkinList 中）。
- * 状态口径与 calc.mjs 一致：gapText 以「达标」开头 → met；有打卡但未达标 → partial；无打卡 → absent。
- *
- * @param {string} reportsDir 归档目录
- * @returns {Array<{issueNo:number, weekStart:string, weekEnd:string, calories:number, minutes:number,
- *                  metCount:number, totalMembers:number, leaveCount:number, absentCount:number,
- *                  members: Map<string,{status:string,calories:number,minutes:number,checkins:number}>}>}
- */
-function loadHistory(reportsDir) {
-  const re = /^\d{4}-issue(\d{2,})\.json$/;
-  const entries = readdirSync(reportsDir)
-    .map((f) => {
-      const m = f.match(re);
-      return m ? { file: f, no: Number(m[1]) } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.no - b.no);
-
-  const issues = [];
-  for (const e of entries) {
-    let d;
-    try {
-      d = JSON.parse(readFileSync(resolve(reportsDir, e.file), 'utf-8'));
-    } catch {
-      continue; // 坏归档跳过，不影响其余期号
-    }
-    const members = new Map();
-    for (const m of d.checkinList || []) {
-      const met = String(m.gapText || '').startsWith('达标');
-      const checkins = m.checkinCount || 0;
-      members.set(m.nickname, {
-        status: met ? 'met' : checkins > 0 ? 'partial' : 'absent',
-        calories: m.totalCalories || 0,
-        minutes: m.totalMinutes || 0,
-        checkins,
-      });
-    }
-    for (const l of d.leaveList || []) {
-      if (!members.has(l.nickname)) {
-        members.set(l.nickname, { status: 'leave', calories: 0, minutes: 0, checkins: 0 });
-      }
-    }
-    issues.push({
-      issueNo: d.issueNo ?? e.no,
-      weekStart: d.weekStart || '',
-      weekEnd: d.weekEnd || '',
-      calories: d.totalCaloriesSum || 0,
-      minutes: d.totalMinutesSum || 0,
-      metCount: d.metCount || 0,
-      totalMembers: d.totalMembers || 0,
-      leaveCount: d.leaveCount || 0,
-      absentCount: d.absentCount || 0,
-      members,
-    });
-  }
-  return issues;
 }
 
 /** 「昵称 → 数据」映射的 key 按别名归一到当前规范名（归档 spotlights / 侧车 notes 都可能带旧名或脏名） */
@@ -396,10 +339,11 @@ function pickTargets(name, actives) {
  * @param {Array} p.targets 目标成员（config.members 的子集）
  * @param {Array} p.rankPool 参与累计排名的全部 active 成员（--name 补生成时也按全群排）
  * @param {Map<string, string>} p.nicknameIndex buildNicknameIndex(config.members) 结果，用于把归档旧昵称归到当前名
+ * @param {(nickname: string) => number} p.presentWeeksOf 在册期数（达标率分母），与渲染路径同一个解析器
  * @param {number} p.issueNo 最新期号
  * @returns {string}
  */
-function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, issueNo }) {
+function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, presentWeeksOf, issueNo }) {
   if (issues.length === 0) return '⚠ 归档目录内没有可解析的期号，无法生成速览';
   const lines = [];
   const last = issues[issues.length - 1];
@@ -412,13 +356,14 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
   lines.push(
     `群级 · ${issues.length} 期 · ${first.weekStart} ~ ${last.weekEnd} · 累计 ${cumulative.group?.totalCalories ?? 0} kcal / ${cumulative.group?.totalMinutes ?? 0} 分钟`
   );
-  // 分子（累计消耗）来自链式快照，与归档是否完整无关；分母（打卡期数/达标期数）来自归档扫描。
-  // 归档被删或损坏时分母偏小 → 周均偏高、达标率失真，必须显式提示，不能静默出数。
+  // 分子（累计消耗）来自链式快照，与归档是否完整无关；分母（打卡期数）来自归档扫描。
+  // 归档被删或损坏时逐期口径的指标（周均、近4期、峰值、请假/缺席/无记录）全部偏斜 → 显式提示，不静默出数。
+  // 达标率不在此列：它走 cumulative 的链式在册口径，缺期也照样准（与渲染卡片同一个数）。
   const expectedIssues = cumulative.group?.issueCount ?? issues.length;
   const archiveComplete = expectedIssues <= issues.length;
   if (!archiveComplete) {
     lines.push(
-      `⚠ 归档可见 ${issues.length} 期，累计快照记录 ${expectedIssues} 期：周均与达标率的分母偏小、数值偏高，本期不出周均，先确认归档是否缺失`
+      `⚠ 归档可见 ${issues.length} 期，累计快照记录 ${expectedIssues} 期：周均/近4期/峰值/请假/缺席按可见归档统计、周均分母偏小数值偏高，本期不出周均，先确认归档是否缺失；达标率不受影响（cumulative 链式在册口径）`
     );
   }
   lines.push('逐期 · 期号 周起 总消耗 达标/人数 请假 缺席');
@@ -471,12 +416,16 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
     if (!cum) continue;
     const series = seriesOf(m.nickname);
     const activeWeeks = series.filter((r) => r && r.checkins > 0).length;
-    const metWeeks = series.filter((r) => r && r.status === 'met').length;
     const leaveWeeks = series.filter((r) => r && r.status === 'leave').length;
     // 缺席 = 归档里点名叫到了、但没打卡也没请假；null = 该期归档完全没有这个人
     // （未入群 / 改名未归一 / 归档缺失），两者不能混算，否则新人会被算成「缺席 N 期」。
     const absentWeeks = series.filter((r) => r && r.status === 'absent').length;
     const missingWeeks = series.filter((r) => !r).length;
+    // 达标分子/分母都取 cumulative 的链式值（与渲染卡片同一个解析器）：
+    // 归档缺期时逐期统计会两头偏小，写出来的「4 期只达标 1 周」和页面 100% 自相矛盾。
+    // 分母是在册期数而非全群期数——新人入群前的期数不算他缺勤，否则「入群 2 期全达标」被写成 50%。
+    const metWeeks = cum.metWeeks ?? 0;
+    const presentWeeks = presentWeeksOf(m.nickname);
     const weeklyAvg = activeWeeks > 0 ? Math.round(cum.totalCalories / activeWeeks) : 0;
     // 半程检查点的累计周均：第 1 期到中点（ceil(总期数/2)）内有打卡期的平均单期消耗。
     // 「周均 A→B」= 走到一半时的水平 → 现在的水平，两端都是「截至当时」的累计，不做前后半程对比。
@@ -526,6 +475,7 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
       leaveWeeks,
       absentWeeks,
       missingWeeks,
+      presentWeeks,
       weeklyAvg,
       rankText,
       avgText,
@@ -548,7 +498,9 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
       leaveWeeks,
       absentWeeks,
       met: metWeeks,
-      total: issues.length,
+      // total = 达标率分母（在册期数），peakIdx 那类逐期位置另用 seriesLength
+      total: presentWeeks,
+      seriesLength: issues.length,
       streak: Number.isFinite(cum.streak) ? cum.streak : 0,
       avg: weeklyAvg,
       rank: rank?.rank ?? 1,
@@ -558,7 +510,7 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
   const angleMap = assignAngles([...facts.values()]);
 
   lines.push(
-    `每人（${targets.length} 人）· 达标/期数 · 打卡(总次数) · 请假 · 缺席 · 周均(累计·排名) · 近4期 · 峰值 · 连击 · 累计项目 Top3 · ▸=full 主论点角度`
+    `每人（${targets.length} 人）· 达标/在册期数 · 打卡(总次数) · 请假 · 缺席 · 周均(累计·排名) · 近4期 · 峰值 · 连击 · 累计项目 Top3 · ▸=full 主论点角度`
   );
   for (const m of targets) {
     const f = facts.get(m.nickname);
@@ -568,8 +520,10 @@ function buildDigest({ issues, cumulative, targets, rankPool, nicknameIndex, iss
     }
     const angle = angleMap.get(m.nickname);
     const angleText = angle ? ` · ▸${angle.tier} ${angle.evidence}` : '';
+    // 达标分母用「在册期数」；与可见归档期数不等时把分母标出来，防止 AI 写成「N 期只达标 M 周」
+    const metText = `达标${f.metWeeks}/${f.presentWeeks}${f.presentWeeks !== issues.length ? `(在册${f.presentWeeks}期)` : ''}`;
     lines.push(
-      `  ${m.nickname} · 达标${f.metWeeks}/${issues.length} · 打卡${f.activeWeeks}(共${f.cum.totalCheckins ?? 0}次) · 请假${f.leaveWeeks} · 缺席${f.absentWeeks} · ${f.avgText} · ${f.recentText} · 峰值${f.peakText} · ${f.streakText} · ${f.top3 || '无'}${f.missingWeeks > 0 ? ` · 无记录${f.missingWeeks}期` : ''}${angleText}`
+      `  ${m.nickname} · ${metText} · 打卡${f.activeWeeks}(共${f.cum.totalCheckins ?? 0}次) · 请假${f.leaveWeeks} · 缺席${f.absentWeeks} · ${f.avgText} · ${f.recentText} · 峰值${f.peakText} · ${f.streakText} · ${f.top3 || '无'}${f.missingWeeks > 0 ? ` · 无记录${f.missingWeeks}期` : ''}${angleText}`
     );
   }
 
@@ -650,22 +604,57 @@ function main() {
   const spotlights = canonicalizeByKey(archive.spotlights || {}, nicknameIndex);
   const issueCount = cumulative.group?.issueCount || issueNo;
 
+  // 达标率分母 = 个人在册期数，digest 与渲染共用 weeksPresent 这一个解析器，两边永远同一个数。
+  // 优先取 cumulative.presentWeeks（calc 每期 +1 链式累加，等于「本人入群后第几期」），
+  // 正常路径全程不读往期归档；只有最新归档里还没有这个字段时才扫一次归档兜底。
+  let historyCache = null;
+  let presenceCache = null;
+  const history = () => (historyCache ??= loadHistory(reportsDir));
+  const presence = () => (presenceCache ??= buildPresenceIndex(history(), nicknameIndex));
+  const weeksPresent = (nickname) => {
+    const metWeeks = cumulative.members?.[nickname]?.metWeeks ?? 0;
+    const chained = cumulative.members?.[nickname]?.presentWeeks;
+    if (Number.isFinite(chained) && chained > 0) return Math.max(chained, metWeeks);
+    return resolvePresentWeeks({
+      nickname,
+      presenceIndex: presence(),
+      visibleIssueCount: history().length,
+      expectedIssueCount: issueCount,
+      metWeeks,
+    });
+  };
+
   // --digest：只打印历史速览（写 personal-insights.json 的取材），不渲染、不校验侧车、不写文件
+  // 它天生要逐期序列（峰值在哪期、近 4 期明细、请假/缺席），所以归档必须全读——渲染路径不需要
   if (digest) {
     const actives = config.members.filter((m) => m.status === 'active');
     const targets = pickTargets(name, actives);
-    console.log(buildDigest({ issues: loadHistory(reportsDir), cumulative, targets, rankPool: actives, nicknameIndex, issueNo }));
+    console.log(
+      buildDigest({
+        issues: history(),
+        cumulative,
+        targets,
+        rankPool: actives,
+        nicknameIndex,
+        presentWeeksOf: weeksPresent,
+        issueNo,
+      })
+    );
     return;
   }
 
   // 全历史起止：首期归档 weekStart → 最新归档 weekEnd（标题条日期区间）
-  let rangeStart = null;
-  const earliestPath = findEarliestArchive(reportsDir);
-  if (earliestPath) {
-    try {
-      rangeStart = JSON.parse(readFileSync(earliestPath, 'utf-8')).weekStart || null;
-    } catch {
-      rangeStart = null;
+  // 首期日期优先取 cumulative.group.firstWeekStart（calc 链式带下来）——渲染路径因此不必再读最早一期归档；
+  // 只有归档里还没有该字段时才回退去读。
+  let rangeStart = cumulative.group?.firstWeekStart || null;
+  if (!rangeStart) {
+    const earliestPath = findEarliestArchive(reportsDir);
+    if (earliestPath) {
+      try {
+        rangeStart = JSON.parse(readFileSync(earliestPath, 'utf-8')).weekStart || null;
+      } catch {
+        rangeStart = null;
+      }
     }
   }
   if (rangeStart === archive.weekStart) rangeStart = null; // 仅一期时省略区间
@@ -749,8 +738,7 @@ function main() {
         cum: cumulative.members[m.nickname],
         member: m,
         config,
-        issueNo,
-        issueCount,
+        presentWeeks: weeksPresent(m.nickname),
         spotlights,
         aiNotes,
       })

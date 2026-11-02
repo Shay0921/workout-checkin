@@ -436,3 +436,73 @@ test('personal：侧车 notes 的 key 用别名/脏昵称也能命中（不再�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 新人中途入群：入群前的期数不算他缺勤。达标率分母必须是「在册期数」，
+// 否则 4 期里第 3 期才入群、后两期全达标的人会被算成 2/4 = 50%。
+function buildLateJoinerArchives() {
+  const w = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'];
+  const e = ['2026-10-11', '2026-10-18', '2026-10-25', '2026-11-01'];
+  // 甲全程在册且第 4 期未达标（分母必须仍是 4）；丁第 3 期才入群，第 3、4 期均达标
+  const spec = [
+    { jia: [100, true], ding: null },
+    { jia: [200, true], ding: null },
+    { jia: [300, true], ding: [400, true] },
+    { jia: [50, false], ding: [500, true] },
+  ];
+  const rows = spec.map((s, i) => {
+    const memberRows = [{ nickname: '甲', calories: s.jia[0], checkins: 3, met: s.jia[1] }];
+    if (s.ding) memberRows.push({ nickname: '丁', calories: s.ding[0], checkins: 3, met: s.ding[1] });
+    return issue({ no: i + 1, start: w[i], end: e[i], memberRows, leaves: [] });
+  });
+  const cumulative = {
+    group: { issueCount: 4, totalCalories: 1200, totalMinutes: 240 },
+    members: {
+      甲: { totalCalories: 650, totalMinutes: 130, totalCheckins: 12, metWeeks: 3, streak: 0, sports: { 跑步: 12 } },
+      丁: { totalCalories: 900, totalMinutes: 180, totalCheckins: 6, metWeeks: 2, streak: 2, sports: { 力训: 6 } },
+    },
+  };
+  for (const r of rows) r.cumulative = cumulative;
+  return rows;
+}
+
+const LATE_CONFIG = {
+  group: '新人测试群',
+  members: [
+    { nickname: '甲', aliases: [], weightKg: 60, gender: '', status: 'active' },
+    { nickname: '丁', aliases: [], weightKg: 60, gender: '', status: 'active' },
+  ],
+};
+
+test('digest：达标分母 = 在册期数，中途中入群的人不被算成缺勤', () => {
+  const { status, out } = runDigest(buildLateJoinerArchives(), { config: LATE_CONFIG });
+  assert.equal(status, 0, out);
+  const ding = line(out, '丁');
+  assert.match(ding, /达标2\/2\(在册2期\)/, `新人分母应为在册 2 期：\n${ding}`);
+  assert.match(ding, /无记录2期/, '入群前两期应记为无记录，而不是缺席');
+  // 全程在册的人口径不变：甲 3/4
+  assert.match(line(out, '甲'), /达标3\/4/);
+});
+
+test('渲染：新人达标率按在册期数算，100% 不被全群期数拉低', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wc-personal-late-'));
+  const reports = join(root, 'reports');
+  mkdirSync(reports);
+  try {
+    for (const a of buildLateJoinerArchives()) {
+      writeFileSync(join(reports, `2026-issue${String(a.issueNo).padStart(2, '0')}.json`), JSON.stringify(a));
+    }
+    writeFileSync(join(root, 'members.json'), JSON.stringify(LATE_CONFIG));
+    const r = spawnSync(process.execPath, [SCRIPT, reports], { encoding: 'utf-8' });
+    const out = (r.stdout || '') + (r.stderr || '');
+    assert.equal(r.status, 0, out);
+    const html = readFileSync(join(reports, '2026-issue04-personal.html'), 'utf-8');
+    const rateOf = (nick) => {
+      const row = html.match(new RegExp(`data-nickname="${nick}"[^>]*data-metrate="(\\d+)"`));
+      return row ? Number(row[1]) : null;
+    };
+    assert.equal(rateOf('丁'), 100, '在册 2 期全达标 = 100%');
+    assert.equal(rateOf('甲'), 75, '全程在册的人仍按 4 期算，口径不受影响');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

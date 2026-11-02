@@ -60,7 +60,8 @@ export function changeCandidates(p) {
   }
   // 峰值刷新与复出/断更是「最近发生的事」，用固定分，保证不被更小的幅度压掉
   // 「刷新」要求峰值前面还有期可比：首期归档、或峰值就是全史第一期时，无上期可刷新
-  const peakIdx = p.peakAge === null ? -1 : (p.total ?? 0) - 1 - p.peakAge;
+  // 这里数的是「可见归档期数」seriesLength，不是 total（在册期数 = 达标率分母，两者对新人不等）
+  const peakIdx = p.peakAge === null ? -1 : (p.seriesLength ?? 0) - 1 - p.peakAge;
   // 近 4 期已经明显走高时，最近的峰值只是同一个故事的最强一格：再报一次「峰值刷新」
   // 会让两个变化名额讲同一件事，所以此时只留「近 4 期 vs 周均」
   if (!driftFired && p.peakAge !== null && p.peakAge <= 1 && peakIdx >= 1 && p.peakCalories > 0) {
@@ -106,6 +107,7 @@ function levelEvidence(p) {
     score = 0.4;
     parts.push(`累计第${p.rank}/${p.size}`);
   }
+  // 达标对：met = 累计达标期数、total = 在册期数（入群后第几期），与个人卡片 metRate 同分子分母
   if (p.total > 0 && p.met === p.total) {
     score = Math.max(score, 0.6);
     parts.push(`达标${p.met}/${p.total}全勤`);

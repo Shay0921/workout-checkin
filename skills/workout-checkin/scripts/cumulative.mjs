@@ -24,6 +24,9 @@ export function defaultMemberCumulative() {
     bestStreak: 0,
     attendanceStreak: 0,
     metWeeks: 0,
+    // 在册期数 = 本人入群后经历的第几期（入群那期 = 1）。达标率分母，
+    // 链式 +1，与 metWeeks 同源：新人不再被入群前的期数算成缺勤。
+    presentWeeks: 0,
     totalCheckins: 0,
     totalMinutes: 0,
     totalCalories: 0,
@@ -39,6 +42,9 @@ export function defaultMemberCumulative() {
 export function defaultGroupCumulative() {
   return {
     issueCount: 0,
+    // 本群首期的 weekStart（标题条「起 → 止」日期区间）。
+    // 链式继承下去，个人战报就不必再读最早一期归档去取这个日期。
+    firstWeekStart: null,
     totalCheckins: 0,
     totalMinutes: 0,
     totalCalories: 0,
@@ -61,6 +67,7 @@ function cloneMemberCumulative(m = {}) {
     bestStreak: num(m.bestStreak),
     attendanceStreak: num(m.attendanceStreak),
     metWeeks: num(m.metWeeks),
+    presentWeeks: num(m.presentWeeks),
     totalCheckins: num(m.totalCheckins),
     totalMinutes: num(m.totalMinutes),
     totalCalories: num(m.totalCalories),
@@ -95,6 +102,8 @@ function mergeMemberCumulative(a, b) {
     bestStreak: Math.max(a.bestStreak, b.bestStreak),
     attendanceStreak: latest.attendanceStreak,
     metWeeks: a.metWeeks + b.metWeeks,
+    // 同一人新旧两个 key 覆盖的期数互不重叠，在册期数相加
+    presentWeeks: a.presentWeeks + b.presentWeeks,
     totalCheckins: a.totalCheckins + b.totalCheckins,
     totalMinutes: a.totalMinutes + b.totalMinutes,
     totalCalories: a.totalCalories + b.totalCalories,
@@ -299,9 +308,21 @@ export function computeStars({ memberStats, prevCumulative }) {
  *           totalMinutes, totalCalories, redPacketAmount, sports{sport:count}
  * @param {object} p.config members.json（取 sportNickname 做项目昵称聚合）
  * @param {number} p.issueNo 本期期号
+ * @param {Map<string, number>|null} p.presentBaseline 迁移用：上期为止的在册期数
+ *   （仅当上期归档还没有 presentWeeks 字段时由 calc 扫归档算出；之后全走链式）
+ * @param {string|null} p.weekStart 本期周起始日（首期时记为 group.firstWeekStart 往下传）
+ * @param {string|null} p.firstWeekStart 迁移用：群首期 weekStart（旧归档缺该字段时由 calc 扫归档补）
  * @returns {object} cumulative = { group, members }
  */
-export function buildCumulative({ prevCumulative, memberStats, config, issueNo }) {
+export function buildCumulative({
+  prevCumulative,
+  memberStats,
+  config,
+  issueNo,
+  presentBaseline = null,
+  weekStart = null,
+  firstWeekStart = null,
+}) {
   const prev = prevCumulative || { group: defaultGroupCumulative(), members: {} };
   const prevGroup = prev.group || defaultGroupCumulative();
   const prevMembers = prev.members || {};
@@ -326,6 +347,16 @@ export function buildCumulative({ prevCumulative, memberStats, config, issueNo }
     // attendanceStreak：有打卡 +1，否则归 0
     const attendanceStreak = m.checkinCount >= 1 ? prevM.attendanceStreak + 1 : 0;
     const metWeeks = m.lastStatus === 'met' ? prevM.metWeeks + 1 : prevM.metWeeks;
+
+    // presentWeeks：本人「在册第几期」。入群那期 prev 里还没有他 → 基线 0 → 1，之后每期 +1。
+    // 缺席（在册但没打卡）照样 +1：他在群里、有义务，那是他自己的缺口；只有「还没入群」不计数。
+    // presentBaseline 仅在上期归档缺该字段时生效（值 = 上期为止的在册期数）。
+    const prevPresent = presentBaseline?.has(m.nickname)
+      ? presentBaseline.get(m.nickname)
+      : Number.isFinite(prevM.presentWeeks)
+        ? prevM.presentWeeks
+        : 0;
+    const presentWeeks = prevPresent + 1;
 
     // sports：保留真实项目名（专精在 computePersona 内聚合，项目分布用真实名）
     const sports = { ...prevM.sports };
@@ -352,6 +383,7 @@ export function buildCumulative({ prevCumulative, memberStats, config, issueNo }
       bestStreak: Math.max(prevM.bestStreak, streak),
       attendanceStreak,
       metWeeks,
+      presentWeeks,
       totalCheckins: prevM.totalCheckins + m.checkinCount,
       totalMinutes: prevM.totalMinutes + m.totalMinutes,
       totalCalories: prevM.totalCalories + m.totalCalories,
@@ -389,6 +421,7 @@ export function buildCumulative({ prevCumulative, memberStats, config, issueNo }
 
   const group = {
     issueCount: (prevGroup.issueCount || 0) + 1,
+    firstWeekStart: prevGroup.firstWeekStart || firstWeekStart || weekStart || null,
     totalCheckins: (prevGroup.totalCheckins || 0) + groupCheckins,
     totalMinutes: (prevGroup.totalMinutes || 0) + groupMinutes,
     totalCalories: (prevGroup.totalCalories || 0) + groupCalories,
