@@ -107,6 +107,8 @@ AI 只做三件事：
 
 ### 方式二：一行安装（npx skills add）
 
+命令来自 [skills.sh](https://www.skills.sh/shay0921/workout-checkin/workout-checkin)，该页也是本 skill 的收录页，站内搜 `workout-checkin` 即可找到，页面上有一键复制的安装命令。
+
 需要 Node ≥ 22.20（`skills` CLI 的 engines 要求，低于此版本 CLI 会在启动阶段直接报错）；运行 skill 本身 Node ≥ 20 即可。
 
 ```bash
