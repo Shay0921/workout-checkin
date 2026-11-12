@@ -97,6 +97,17 @@ test('结构：cumulative.members / recentWeeks 字段集与 calc 输出一致',
   }
 });
 
+test('结构：efficiencyStar 字段集与 calc 当前输出一致（口径开关留痕）', () => {
+  const fresh = buildFreshData();
+  assert.ok(fresh.efficiencyStar, 'calc 应产出燃效之星');
+  assert.deepEqual(
+    Object.keys(sample.efficiencyStar).sort(), Object.keys(fresh.efficiencyStar).sort(),
+    'efficiencyStar 字段集与 calc 输出不一致（metric / value / unit / realKcalPerMin）'
+  );
+  // 样例默认走 avgMet；切到 kcalPerMin 时 realKcalPerMin 不写入，由 star-metric.test.mjs 锁
+  assert.equal(sample.efficiencyStar.metric, 'avgMet');
+});
+
 test('取值：checkinList 派生字段结构、枚举与胶囊口径', () => {
   const capsuleKeys = Object.keys(streakCapsule(2)).sort();
   const capsuleStyles = new Set(streakCapsuleTiers().map((t) => t.style));
@@ -155,25 +166,43 @@ test('取值：里程碑等级与 badges 阈值自洽', () => {
 
 test('取值：星级得主与名单数值一致、进步之星需 ≥4 期历史', () => {
   const maxKcal = Math.max(...sample.checkinList.map((m) => m.totalCalories));
-  // 燃效之星口径：avgMET = Σ(MET×分钟)/Σ分钟，需本周时长 ≥ EFFICIENCY_STAR_MIN_MINUTES 分钟
+  // 燃效之星口径随 metric 切换：avgMet 比平均强度、kcalPerMin 比真实消耗速率；
+  // 两种口径都保留 ≥ EFFICIENCY_STAR_MIN_MINUTES 分钟的参与门槛。
   const eligible = sample.checkinList.filter((m) => m.totalMinutes >= EFFICIENCY_STAR_MIN_MINUTES);
-  const maxAvgMet = Math.max(...eligible.map((m) => m.loadScore / m.totalMinutes));
 
   if (sample.calorieKing) {
     assert.equal(sample.calorieKing.kcal, maxKcal, '消耗之星 kcal 不等于名单最高消耗');
     const row = sample.checkinList.find((m) => m.nickname === sample.calorieKing.nickname);
     assert.equal(row?.totalCalories, maxKcal, '消耗之星得主不是名单消耗第一');
   }
-  if (sample.efficiencyStar) {
-    assert.equal(sample.efficiencyStar.avgMet, Math.round(maxAvgMet * 10) / 10, '燃效之星 avgMet 不等于名单最高平均强度');
-    const row = sample.checkinList.find((m) => m.nickname === sample.efficiencyStar.nickname);
+  const es = sample.efficiencyStar;
+  if (es) {
+    assert.ok(['avgMet', 'kcalPerMin'].includes(es.metric), `燃效之星 metric 非法：${es.metric}`);
+    assert.equal(es.unit, es.metric === 'kcalPerMin' ? 'kcal/min' : 'MET', '燃效之星 unit 与 metric 不匹配');
+    const scores = eligible.map((m) => es.metric === 'kcalPerMin'
+      ? m.totalCalories / m.totalMinutes
+      : m.loadScore / m.totalMinutes);
+    assert.equal(es.value, Math.round(Math.max(...scores) * 10) / 10, '燃效之星 value 不等于名单口径最高值');
+    const row = sample.checkinList.find((m) => m.nickname === es.nickname);
     assert.ok(row && row.totalMinutes >= EFFICIENCY_STAR_MIN_MINUTES, `燃效之星得主本周时长不足 ${EFFICIENCY_STAR_MIN_MINUTES} 分钟`);
-    assert.equal(Math.round((row.loadScore / row.totalMinutes) * 10) / 10, sample.efficiencyStar.avgMet,
-      '燃效之星得主 avgMET 与名单数值不一致');
+    if (es.metric === 'avgMet') {
+      assert.equal(Math.round((row.loadScore / row.totalMinutes) * 10) / 10, es.value,
+        '燃效之星得主 avgMET 与名单数值不一致');
+      assert.equal(es.realKcalPerMin, Math.round((row.totalCalories / row.totalMinutes) * 10) / 10,
+        'avgMet 模式附带的真实 kcal/min 与得主名单数值不一致');
+    } else {
+      assert.equal(Math.round((row.totalCalories / row.totalMinutes) * 10) / 10, es.value,
+        'kcalPerMin 模式得主真实消耗速率与名单数值不一致');
+      assert.equal(es.realKcalPerMin, undefined, 'kcalPerMin 模式不应重复附带 realKcalPerMin');
+    }
   }
-  if (sample.progressStar) {
-    const cum = sample.cumulative.members[sample.progressStar.nickname];
+  const ps = sample.progressStar;
+  if (ps) {
+    const cum = sample.cumulative.members[ps.nickname];
     assert.ok(cum && cum.recentWeeks.length >= 4, '进步之星要求该成员 ≥4 期历史（recentWeeks）');
+    assert.equal(ps.unit, 'kcal/min', '新版进步之星展示单位必须是真实 kcal/min');
+    assert.equal(typeof ps.prevValue, 'number', 'progressStar.prevValue 缺失');
+    assert.equal(typeof ps.curValue, 'number', 'progressStar.curValue 缺失');
   }
 });
 
@@ -234,4 +263,22 @@ test('取值：sportStats 子字段集与 calc 同步，人次/时长派生量�
     sample.totalSessions > 0 ? Math.round(sample.totalMinutesSum / sample.totalSessions) : 0,
     'avgMinutesPerSession 的分母是人次，不是人数'
   );
+});
+
+test('取值：calorieCoverage 字段集、三类闭环与 calc 同步', () => {
+  const fresh = buildFreshData();
+  const cc = sample.calorieCoverage;
+  assert.ok(cc, '样例缺少 calorieCoverage');
+  assert.deepEqual(
+    Object.keys(cc).sort(),
+    Object.keys(fresh.calorieCoverage).sort(),
+    'calorieCoverage 字段集与 calc 输出不一致'
+  );
+  assert.equal(
+    cc.reported + cc.estimated + cc.mixed,
+    cc.total,
+    '纯实测 + 纯 MET 兜底 + 合并行应等于 total'
+  );
+  assert.equal(cc.total, sample.totalSessions, 'total 与全群人次同源（都是 finalFlows.length）');
+  assert.match(cc.note, /纯实测 \d+\/\d+ 条/);
 });

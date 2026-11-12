@@ -206,28 +206,48 @@ export function nextTier(current, tiers, isStreak = false) {
 /** 燃效之星参与门槛（分钟）：低于该时长不参与评比，防止「几分钟高强度」靠比率刷榜 */
 export const EFFICIENCY_STAR_MIN_MINUTES = 30;
 
+/** 燃效之星支持的口径：默认体重归一的平均训练强度，可切真实消耗速率 */
+export const EFFICIENCY_STAR_METRICS = ['avgMet', 'kcalPerMin'];
+
+/**
+ * 解析 members.json 的 efficiencyStarMetric（可选配置，默认 avgMet）。
+ * 只认两个字面量，缺失/拼错一律回退默认 —— 配置笔误不能悄悄把榜单口径换掉。
+ * @param {object|null} config
+ * @returns {'avgMet'|'kcalPerMin'}
+ */
+export function resolveEfficiencyMetric(config) {
+  return config?.efficiencyStarMetric === 'kcalPerMin' ? 'kcalPerMin' : 'avgMet';
+}
+
 /**
  * 本周之星统一判定（消耗之星 / 燃效之星 / 进步之星 —— 单一真源）
  *
  * buildCumulative（蝉联统计）、computeSpotlights（spotlight 徽章）、calc.mjs 主流程（模块 06 三星卡）
  * 共用本函数。各星 tie-break 口径（务必逐条区分，勿笼统表述）：
- *   - 消耗之星：取 totalCalories 最大；完全并列时按 memberStats 顺序取首个（不再比较强度）
- *   - 燃效之星：取平均训练强度 avgMET = Σ(MET×分钟)/Σ分钟 最大（本周时长 ≥ EFFICIENCY_STAR_MIN_MINUTES 分钟）；
+ *   - 消耗之星：取 totalCalories 最大；完全并列时按 memberStats 顺序取首个（不比较强度）
+ *   - 燃效之星：默认取 avgMET = Σ(MET×分钟)/Σ分钟 最大（本周时长 ≥ EFFICIENCY_STAR_MIN_MINUTES 分钟）；
+ *     efficiencyMetric='kcalPerMin' 时改取真实 kcal/min = totalCalories/totalMinutes 最大。
  *     完全并列时按 memberStats 顺序取首个
  *   - 进步之星：取提升率最大；提升率完全相等时取本周平均强度更高者（curMet tie-break）
  * 三者均只依赖 memberStats 顺序，同一输入结果可复现。
  *
+ * 口径分工：进步之星是「自己跟自己比」，体重约掉，直接用真实 kcal/min 最准；
+ * 燃效之星是「人与人排名」，默认体重归一才公平，kcal/min 模式会把体重/设备差异带进榜单，
+ * 故做成显式开关（默认 avgMet），不做隐式切换。
+ *
  * @param {object} p
  * @param {Array} p.memberStats buildStats 的 per-member 状态
  * @param {object|null} p.prevCumulative 上期 cumulative（进步之星取 recentWeeks 历史）
+ * @param {'avgMet'|'kcalPerMin'} [p.efficiencyMetric='avgMet'] 燃效之星排名口径
  * @returns {{
  *   calorieKing: {nickname:string, kcal:number}|null,
- *   efficiencyStar: {nickname:string, avgMet:number}|null,
- *   progressStar: {nickname:string, prevAvgMet:number, curMet:number, improvement:number}|null,
+ *   efficiencyStar: {nickname:string, metric:string, value:number, unit:string, realKcalPerMin:number}|null,
+ *   progressStar: {nickname:string, prevKcalPerMin:number, curKcalPerMin:number, improvement:number}|null,
  * }}
  */
-export function computeStars({ memberStats, prevCumulative }) {
+export function computeStars({ memberStats, prevCumulative, efficiencyMetric = 'avgMet' }) {
   const prevMembers = prevCumulative?.members || {};
+  const metric = efficiencyMetric === 'kcalPerMin' ? 'kcalPerMin' : 'avgMet';
 
   // 消耗之星：本周卡路里总量第一
   let calKing = null;
@@ -239,18 +259,22 @@ export function computeStars({ memberStats, prevCumulative }) {
     }
   }
 
-  // 燃效之星：本周平均训练强度（avgMET）第一
-  // ⚠️ 口径说明：旧算法 kcal/min = MET×体重/60，体重是乘数，跨人比较会退化成「谁体重最大」；
-  //     现改为 avgMET = Σ(MET×分钟)/Σ分钟，体重无关，语义是「谁练得最硬核」。
+  // 燃效之星：默认平均训练强度（avgMET，体重归一）；开关切到 kcalPerMin 时用真实消耗速率。
+  // ⚠️ 旧算法 kcal/min = MET×体重/60 是估算巧合，不是实测；实测 kcal 与 MET 之间没有固定换算。
+  //    avgMet 模式跨人公平但不含实测能量；kcalPerMin 模式真实但体重/设备大者天然占优。
   // 参与门槛：本周总时长 ≥ EFFICIENCY_STAR_MIN_MINUTES，避免「几分钟高强度」靠比率刷榜。
   let effStar = null;
   let effMax = -1;
+  let effRealKcalPerMin = 0;
   for (const m of memberStats) {
     if (m.totalMinutes < EFFICIENCY_STAR_MIN_MINUTES) continue;
     const avgMet = m.loadScore / m.totalMinutes;
-    if (avgMet > effMax) {
-      effMax = avgMet;
+    const kcalPerMin = m.totalCalories / m.totalMinutes;
+    const score = metric === 'kcalPerMin' ? kcalPerMin : avgMet;
+    if (score > effMax) {
+      effMax = score;
       effStar = m.nickname;
+      effRealKcalPerMin = kcalPerMin;
     }
   }
 
@@ -260,7 +284,6 @@ export function computeStars({ memberStats, prevCumulative }) {
   let progCurMet = -1;
   let progPrevAvg = 0;
   let progCurEff = 0;
-  let progWeight = 0;
   for (const m of memberStats) {
     if (m.totalMinutes === 0) continue;
     const recent = prevMembers[m.nickname]?.recentWeeks || [];
@@ -272,27 +295,36 @@ export function computeStars({ memberStats, prevCumulative }) {
     const curEff = m.totalCalories / m.totalMinutes;
     const improvement = (curEff - prevAvg) / prevAvg;
     if (improvement <= 0) continue; // 仅正提升参与
-    // 并列 tie-break：改比本周平均强度（avgMET），与燃效之星同一口径
+    // 并列 tie-break：改比本周平均强度（avgMET），与燃效之星默认口径一致
     const curMet = m.loadScore / m.totalMinutes;
     if (improvement > progMax || (improvement === progMax && curMet > progCurMet)) {
       progMax = improvement;
       progCurMet = curMet;
       progPrevAvg = prevAvg;
       progCurEff = curEff;
-      progWeight = m.weightKg;
       progStar = m.nickname;
     }
   }
 
+  // 进步之星判定与展示统一为真实 kcal/min：实测 kcal 与 MET 无固定换算，不做任何换算。
+  // 提升率 =（本期 kcal/min − 前 3 周 kcal/min 均值）÷ 前 3 周均值。
   return {
     calorieKing: calKing ? { nickname: calKing, kcal: calMax } : null,
-    efficiencyStar: effStar ? { nickname: effStar, avgMet: effMax } : null,
-    // 进步之星：提升率基于 kcal/min（分子分母同一体重，体重约掉）；展示值换算为 MET，与燃效之星同单位
+    efficiencyStar: effStar
+      ? {
+          nickname: effStar,
+          metric,
+          value: effMax,
+          unit: metric === 'kcalPerMin' ? 'kcal/min' : 'MET',
+          // avgMet 模式下附带该得主的真实消耗速率，供洞察/审计取材（不参与排名）
+          realKcalPerMin: effRealKcalPerMin,
+        }
+      : null,
     progressStar: progStar
       ? {
           nickname: progStar,
-          prevAvgMet: (progPrevAvg * 60) / progWeight,
-          curMet: (progCurEff * 60) / progWeight,
+          prevKcalPerMin: progPrevAvg,
+          curKcalPerMin: progCurEff,
           improvement: progMax,
         }
       : null,
@@ -333,8 +365,9 @@ export function buildCumulative({
   let groupRedPacket = 0;
   let groupMetWeeks = 0;
 
-  // 本周之星（消耗/效率）统一走 computeStars，蝉联统计只取昵称
-  const stars = computeStars({ memberStats, prevCumulative });
+  // 本周之星（消耗/效率）统一走 computeStars，蝉联统计只取昵称。
+  // 燃效口径必须与 calc.mjs 三星卡 / computeSpotlights 一致，否则蝉联会记到另一个人头上。
+  const stars = computeStars({ memberStats, prevCumulative, efficiencyMetric: resolveEfficiencyMetric(config) });
   const effNick = stars.efficiencyStar?.nickname || null;
   const calKingNick = stars.calorieKing?.nickname || null;
 
@@ -536,13 +569,14 @@ const SPOTLIGHT_PRIORITY = [
  * @param {object} p
  * @param {Array} p.memberStats buildStats 的 per-member 状态
  * @param {object|null} p.prevCumulative 上期 cumulative（取 lastStatus / bestCalories / recentWeeks）
+ * @param {object|null} [p.config] members.json（取 efficiencyStarMetric 保持燃效口径一致）
  * @returns {Record<string, {type:string,label:string}>} nickname → spotlight
  */
-export function computeSpotlights({ memberStats, prevCumulative }) {
+export function computeSpotlights({ memberStats, prevCumulative, config = null }) {
   const prevMembers = prevCumulative?.members || {};
 
-  // 三星判定统一走 computeStars 单一真源（tie-break 口径一致）
-  const stars = computeStars({ memberStats, prevCumulative });
+  // 三星判定统一走 computeStars 单一真源（tie-break 与燃效口径一致）
+  const stars = computeStars({ memberStats, prevCumulative, efficiencyMetric: resolveEfficiencyMetric(config) });
   const calKing = stars.calorieKing?.nickname || null;
   const effStar = stars.efficiencyStar?.nickname || null;
   const progStar = stars.progressStar?.nickname || null;

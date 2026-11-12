@@ -89,7 +89,7 @@ test('getIssueWindow：次周恢复自然周（周一~周日）', () => {
 test('calcIssueNo：首期从周五开始（10-16）→ 次一自然周仍是第 2 期', () => {
   const fri = { anchorIssue: 1, anchorWeekStart: '2026-10-16', anchorWeekEnd: '2026-10-18' };
   assert.equal(calcIssueNo('2026-10-12', fri), 1); // 锚点所在自然周 = 第 1 期
-  assert.equal(calcIssueNo('2026-10-19', fri), 2); // 回归锁：旧 round(3/7) 会算成第 1 期
+  assert.equal(calcIssueNo('2026-10-19', fri), 2); // 锚点所在自然周计为第 1 期，与周内剩余天数无关
   assert.equal(calcIssueNo('2026-11-02', fri), 4);
 });
 

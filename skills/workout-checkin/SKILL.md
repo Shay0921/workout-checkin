@@ -46,7 +46,7 @@ description: "运动打卡接龙生成周报，当用户想回顾运动群一周
 | `assets/members.sample.json` | 配置结构模板（Step 2.5 用）：完整 members.json 骨架，占位符需替换 |
 | `assets/members.sample.md` | 配置字段说明书（Step 2.5 用）：字段分档 + 量纲折算 `convert` + 提问清单与接龙格式 + 成员字段说明 + 常见调整场景 + 禁忌 |
 | `assets/data.sample.json` | 结构与取值样例（仅测试/参照）：字段集由 `test/sample-schema.test.mjs` 守卫，calc 迭代后须同步。**禁止当交付数据渲染**（render 对文件名含 sample 的数据硬拦截） |
-| `test/` | 单元测试（node:test，零依赖）：日期/解析/统计/趋势/累计/端到端，另含出图 CLI 参数、沙箱降级与真实截图回归，锁住已知坑 |
+| `test/` | 单元测试（node:test，零依赖）：日期/解析/统计/趋势/累计/端到端，另含出图 CLI 参数、沙箱降级与真实截图回归，覆盖全部口径 |
 
 
 运行时数据（调用时的工作区）：
@@ -59,7 +59,7 @@ description: "运动打卡接龙生成周报，当用户想回顾运动群一周
 
 **配置与中间产物**
 
-- `<工作区>/members.json` —— 群规则配置（首次初始化生成，随工作区走）：达标线、红包档位、请假关键词、MET 表、intensityOverride、量纲换算、期数锚点、成员名单
+- `<工作区>/members.json` —— 群规则配置（首次初始化生成，随工作区走）：达标线、红包档位、请假关键词、MET 表、intensityOverride、量纲换算、期数锚点、成员名单、efficiencyStarMetric（燃效之星口径开关）
 - `<工作区>/records.json` —— AI 翻译的打卡流水（每期覆盖）
 - `<工作区>/data.json` —— calc 输出的统计数据（每期覆盖；AI 在其上补写 insights）
 - `<工作区>/reports/personal-insights.json` —— 个人洞察边车（Step 6 按需写入，personal.mjs 读取；同一文件按 issueNo 复用）
@@ -90,18 +90,23 @@ node <skill目录>/scripts/preflight.mjs --workspace <工作区>
 {
   "weekStart": "2026-10-12",
   "records": [
-    { "nickname": "成员甲~", "ordinal": 3, "sport": "力量训练", "quantity": 1.5, "unit": "h" }
+    { "nickname": "刘欣雨", "session": "L1", "sport": "游泳", "quantity": 53, "unit": "min", "kcal": 613 },
+    { "nickname": "成员甲~", "session": "L2", "sport": "力量训练", "quantity": 1.5, "unit": "h" }
   ],
-  "leaves": [ { "nickname": "成员乙", "reason": "病假" } ]
+  "leaves": [ { "nickname": "成员乙", "reason": "本周请假" } ]
 }
 ```
+
+第一行是格式 C（自带实测 kcal）；第二行没写 kcal，走 MET 兜底。格式 A/B 里的 `ordinal` 仍可照常用，两类写法可以混在同一份接龙里。
 
 字段规则：
 
 - `weekStart`：**本期统计周的周一**（锚点短周填实际起始日）。calc 用它挡住「复用上期接龙出本周周报」——与 `--week` 推出的周期不符直接报错；缺失只告警，但必须补写
 - `nickname`：**原样抄写**接龙中的昵称（含 emoji、波浪号等脏字符）——归一化匹配由 calc 完成
-- `ordinal`：第几次打卡（「第一次/第1次/第①次/第1️⃣次」等价识别为整数）；无标注填 `null`（calc 自动补号）。写了就必须是**正整数 number**：字符串 `"1"`、0、负数、小数、中文序数一律判「次数标注非法」整期不产出
+- `session`：**推荐（新格式）**——接龙一行的分组标记，同一行拆出的多条 records 写同一个值（非空字符串或正整数，如 `"L1"`）。calc 让同组共享同一个 ordinal → **一行只算 1 次打卡、多个项目各计 1 人次、kcal 逐条累加**。一行只有一个项目时可整条省略
+- `ordinal`：**格式 A/B 专用**——接龙写了「第 N 次打卡」（「第一次/第1次/第①次/第1️⃣次」等价识别为整数）才填；格式 C 不写。省略 / `null` 时 calc 自动补号；写了就必须是**正整数 number**：字符串 `"1"`、0、负数、小数、中文序数一律判「次数标注非法」整期不产出。**显式 ordinal 优先于 session**
 - `sport`：**原样抄写**项目名——MET 查表与别名归一由 calc 完成
+- `kcal`：**接龙自带的实测消耗**（`613kcal` / `613千卡` / `消耗613` 都识别为 `613`）→ 填正数 number。写了就直接用它，不再按 MET 估算、也不要求体重；整条省略 / `null` → 走 `MET × 体重 × 时长` 兜底。字符串 `"613"`、0、负数、`"约600"` 一律判「卡路里非法」整期不产出——**禁止自行估算，或用 MET 值冒充实测值**
 - `quantity` + `unit`：原始量化与单位，unit 枚举 `h / min / floor / km / count`；`floor` / `km` / `count` 靠 `convert` 折算，未配置时 calc 报「换算未配置」；换算由 calc 完成
   - `quantity` 必须写**正数 number**：`1.5` / `45` / `200`，字符串、`"1,5"`（逗号小数点）、`"约1小时"`、区间 `"30-40"`、带单位文本、0 / 负数一律判「数量非法」整期不产出——范围或约数取能确认的一端，或直接问用户，**禁止自行估算**
   - 原文数字缺单位（如「跑了30」）→ **按 `min` 处理**（群内口语默认分钟）；只有原文写了「小时 / h」或数值本身是小时量级（1、1.5、2）且上下文在讲时长时才用 `h`。单位读错（30min 当 30h）脚本不会报错，只会整期数字全错
@@ -116,7 +121,8 @@ node <skill目录>/scripts/preflight.mjs --workspace <工作区>
 | --- | --- |
 | 分隔符混杂（`+` 空格 `，` `、`） | 视为分隔符切分 |
 | **序号错乱/重复/缺失** | **按「昵称 + 第N次」归人，完全忽略行首序号** |
-| 一条含多个项目（如「自由活动+46分钟+羽毛球+1.85h」） | 拆成多条 records，各自带相同 ordinal |
+| 一条含多个项目（如「自由活动+46分钟+羽毛球+1.85h」） | 拆成多条 records，**写同一个 `session`**（格式 A/B 则写相同 ordinal）→ 1 次打卡、2 个项目人次；不要给每条各补一个号 |
+| 行尾自带 `613kcal` / `613千卡` / `消耗613` | 写进该条 `kcal: 613`；同一行拆成多个项目时各条分别写自己的 kcal，没写就不写（逐条兜底） |
 | 成员表外昵称 | 照常翻译进 records——calc 会报错列出，再按「报错处理」确认 |
 | **昵称带后缀备注**（如「成员甲 年底目标60KG」） | 原样抄写——calc 前缀兜底自动归人；命中多个成员时报错，确认后把准确昵称补进对应成员 `aliases` |
 | **表外新运动项目** | **翻译阶段先停下来问用户，不猜 MET**——完整流程见「边界情况」 |
@@ -131,24 +137,30 @@ node <skill目录>/scripts/calc.mjs <工作区>/records.json -o <工作区>/data
 - **节假日/特殊周期达标线**：本周只需打卡 N 次即达标时加 `--min-checkins N`——达标判定/达标率/状态文案/红包档位全部自动跟随，归档记录当期生效值；「差 1 次」档只在达标线 ≥ 2 时存在，达标线 1 时 0 打卡直接落「未打卡」档；**用户接龙语境提到节假日（国庆/春节/假期等）但未明说达标线时，先确认一句「本周达标线是否需要临时调整？」再计算**
 - 期号、周起止由脚本从 members.json 锚点计算（stdout 打印摘要，核对用）
 - **每次运行从磁盘重读 members.json**（天然杜绝会话缓存事故）；自动定位上期归档（本年 `issue<NN-1>` → 跨年回退上一年最大期号），无归档按首期兜底
-- 输出完整 data.json（基础统计 + 8 个扩展字段：cumulative / metSnapshot / spotlights / milestoneCelebrations / calorieKing / efficiencyStar / progressStar / streakBreaks），`insights` 为空数组占位，字段契约见模板头部注释
+- 输出完整 data.json（基础统计 + `calorieCoverage` 能量来源覆盖率 + 8 个扩展字段：cumulative / metSnapshot / spotlights / milestoneCelebrations / calorieKing / efficiencyStar / progressStar / streakBreaks），`insights` 为空数组占位，字段契约见模板头部注释
+- **能量口径**：总消耗 / 累计 / 周均 / 峰值 / 消耗之星 / 项目燃效 / 进步之星（自己跟自己比）全部吃实测 kcal（没写才用 MET 兜底）；强度分档、专精标签仍只由 MET 决定，是「强度」不是「能量」维度
+- **本周之星口径**：燃效之星默认按 `avgMet`（体重归一的平均强度）排名；`members.json` 可选 `efficiencyStarMetric: "kcalPerMin"` 切成真实消耗速率排名（体重/设备差异会进榜）。判定 / 蝉联 / spotlight 三处共用同一开关，口径随归档 `efficiencyStar.metric` 留痕。进步之星判定与展示统一为真实 kcal/min（`prevValue → curValue`，`unit='kcal/min'`），不做 MET 换算；归档按真值不重算
+- **标签体系零 kcal 输入**：燃烧系/松弛系/均衡系按**累计项目人次**的强度档占比（> 60%）判定，专精按同一项目累计人次过门槛判定，配色按 MET 强度档，`personaTag` 只是「专精优先、否则强度分型」——输入全是人次 / MET / 周数，标签判定、阈值与档位与能量口径无关。洞察文案禁止用 `kcalPerMin` 反推高强度（见 `references/insight-writing.md` §0.7）
 
 报错处理（stderr + 退出码 1；records / leaves 的字段错误**一次列全**，其余遇到第一个即退出。按 stderr 文案修，改完重跑即可）：
 
 - `数量非法` → **只回读接龙原文改成正确的正数 number，不许猜一个能过校验的值**——原文没写时长或无从判断就问用户
 - `次数标注非法` → `ordinal` 改成正整数 number（去掉引号）；接龙没写次数就整条省略，由脚本补号。**不要为了过校验把两次打卡写成同一个 ordinal**，那会把两次并成一次
 - `请假次数无效` → `times` 改正整数；原文是整周请假语义就整条删掉 `times`
+- `卡路里非法` → `kcal` 改成纯正数 number（如 `613`）；接龙没写 kcal 就整条省略由 MET 兜底，**禁止猜一个能过校验的值**
+- `分组标注非法` → `session` 改成同一行共用的非空字符串或正整数；不需要分组就整条省略
+- `能量冲突` / `分组标注冲突` → **回读接龙原文**：同一项目同分钟却写了两个不同 kcal（重复贴删一条、两次独立打卡拆成不同 `session` / `ordinal`）；同一行写了两个不同「第 N 次」同理。整期拦下，**禁止猜值、禁止自行分摊**
+- `体重无效` → **只影响没写 kcal 的记录**：给该成员补 `weightKg` / 配 `defaultWeightKg`，或让他在接龙里补实测 kcal。注意 Step 0 体检会先强制 `defaultWeightKg` 为正数，本期全带 kcal 也不能删这个默认值（漏贴时兜底 + MET 兜底记录需要体重）
 - `未知昵称 / 前缀匹配到多个成员` → 与用户确认：新成员 → members.json 增员（确认出的准确昵称加进 `aliases`）；否 → 修正 records.json 拼写/归属后重跑
 - `未知运动 / 未知单位` → 未知运动按「边界情况」新项目流程注册，**禁止猜 MET**；未知单位核对 unit 枚举（h/min/floor/km/count）修 records.json
 - `楼层/公里/数量换算未配置` → 先问用户折算系数，写进 members.json 的 `convert` 后重跑，**禁止改 records 里的数值绕过**
-- `体重无效` → 给该成员补 `weightKg`，或在 members.json 配 `defaultWeightKg`
 - `records.json 标注的统计周是 X，本期应为 Y` → 手里不是本周接龙：请用户重新贴本周接龙；确实补算 X 周就传 `--week` 落在 X 周，**禁止手改 weekStart 蒙混**
 - `--week 不是有效日期` / `weekStart 不是有效日期` → 必须是真实存在的日期，月日可不补零（`2026-3-5` = `2026-03-05`）；`2026-02-30` 这类会被直接拦下
 - `第 N 期找不到上期归档` / `上期归档读不出来` → 账本断链或归档损坏，**交回用户决定，禁止自行加 `--allow-missing-prev`**（会清掉累计/连击/里程碑）；先按 stderr 排查：流浪归档挪回 reports/ → 补算上一期
 - `归档期号未补零` → 按 stderr 给出的对照改名为 `<年>-issue<NN>.json` 后重跑
 - `<工作区>/members.json` 不存在 → 回 Step 0 体检（退出码 2）
 
-> **软告警（`⚠` 且不中断）不算报错**：单条时长偏高、单人单周合计偏高、重复贴合并等只是提示核对，报表照常产出；确认原文无误就继续，不用改数据去消警告。
+> **软告警（`⚠` 且不中断）不算报错**：单条时长偏高、单人单周合计偏高、真重复贴去重、补充贴合并等只是提示核对，报表照常产出；确认原文无误就继续，不用改数据去消警告。**例外**：「能量冲突」「分组标注冲突」是硬错误，整期不产出，必须回读原文修数据。
 
 > **`--members <路径>` 是备用参数**：只在临时读另一份配置 / 测试隔离 / 改配置前后对比时用；常规流程一律不传，默认永远读 `<工作区>/members.json`。
 
@@ -156,14 +168,14 @@ node <skill目录>/scripts/calc.mjs <工作区>/records.json -o <工作区>/data
 
 **触发条件**：Step 0 退出码为 `2`（或 calc 报「未找到 members.json」）。已存在配置时整段跳过。
 
-**禁止凭记忆手写整份 JSON**（整张 MET 表 + 别名 + 专精昵称，抄错一个键整期报废）。**默认值优先，只问三件事**——提问方式、默认值清单、成员对象生成规则、接龙格式 A/B 全部以 `assets/members.sample.md` **§三–§四** 为准，本节不复述：
+**禁止凭记忆手写整份 JSON**（整张 MET 表 + 别名 + 专精昵称，抄错一个键整期报废）。**默认值优先，只问三件事**——提问方式、默认值清单、成员对象生成规则、接龙格式 C（推荐）/ A/B（兜底）全部以 `assets/members.sample.md` **§三–§四** 为准，本节不复述：
 
 1. 读两个配套文件：`assets/members.sample.json`（结构真源，复制后替换占位符，**不要从本文件正文抄 JSON**）+ `assets/members.sample.md`（填写口径）
-2. 按 §三 默认值直出（达标线 3 次/周、红包 ¥5 / ¥10、9 个请假词、默认体重 60kg、MET 表），摘要列给用户并说明「**不调整就按默认来**」
-3. 按 §三 只问三件事（一条消息问完）：① 群名；② 成员名单——**首选让用户贴一次完整接龙**，且接龙只是名单下界，必须补问「还有没有未打卡/请假没接龙的成员？」把名单补全；③ 首个统计周——常规周填周一 ~ 周日，节后短周填实际开始日 ~ 该周周日，**不要把锚点改成该周周一**。成员对象按 §三–§四 生成（昵称原样、`status` 一律 `active`、体重/性别可选默认 60kg / 留空、变体写法观察不到先不配 `aliases`），并主动讲清「体重决定卡路里、性别不影响计算」与「归档是不可变快照、改体重只对未来期生效」两点
+2. 按 §三 默认值直出（达标线 3 次/周、红包 ¥5 / ¥10、9 个请假词、默认体重 60kg、MET 表、燃效之星口径 `avgMet`），摘要列给用户并说明「**不调整就按默认来**」——即便接龙都自带 kcal，MET 表与默认体重仍要保留（能量兜底 + 强度维度）；用户想让燃效之星按真实 kcal/min 排名时，把 `efficiencyStarMetric` 改成 `kcalPerMin`，并说明体重/设备差异会进榜
+3. 按 §三 只问三件事（一条消息问完）：① 群名；② 成员名单——**首选让用户贴一次完整接龙**，且接龙只是名单下界，必须补问「还有没有未打卡/请假没接龙的成员？」把名单补全；③ 首个统计周——常规周填周一 ~ 周日，节后短周填实际开始日 ~ 该周周日，**不要把锚点改成该周周一**。成员对象按 §三–§四 生成（昵称原样、`status` 一律 `active`、体重/性别可选默认 60kg / 留空、变体写法观察不到先不配 `aliases`），并按 §三 讲清能量口径与归档不可变
 4. 以 sample.json 为底替换占位符 → **摘要展示给用户确认**（群名 / 人数 / 达标线 / 红包 / 首期日期 + 沿用默认值的项）→ 写入 `<工作区>/members.json`（与 records.json / data.json / reports/ 同级，不写进 skill 目录）
 5. 重跑 Step 0 体检，退出码 `0` 才算可用。通过后**按触发来源回主流程**：Step 0 首跑触发（records.json 尚未翻译）→ 回 Step 1；calc 报错触发（records.json 已在）→ 回 Step 2 重跑
-6. 初始化时按 §三 末尾的「接龙格式」告知用户：群里有现成格式就沿用，没有固定格式的新群才建议格式 A；下周起用户直接贴接龙原文就是 Step 1 的输入
+6. 初始化时按 §三 末尾的「接龙格式」告知用户：群里有现成格式就沿用，没有固定格式的新群建议**格式 C（姓名+运动+分钟+kcal，不写第几次）**；格式 A/B 作为兜底继续支持，混写也不影响。下周起用户直接贴接龙原文就是 Step 1 的输入
 
 ### Step 3：补写 insights（AI 职责，唯一文案环节）
 
@@ -200,7 +212,7 @@ node <skill目录>/scripts/render.mjs <工作区>/data.json
    - 受限环境（TRAE / 容器等）若报 `Chrome CDP 连接已关闭`：脚本会自动加 `--no-sandbox` 重试一次，不占用 `--retries` 次数；也可直接传该参数
    - 退出码非 `0`（本机没有 Chrome/Chromium、页面加载失败等）→ **照常交付 HTML**，一句话说明「未能自动出图，请用浏览器打开手动保存」；不要安装依赖、不要改报告、不要反复重试
    - 个人战报不调用此脚本（Step 6 保持原有手动保存流程）
-2. 用当前环境可用的预览方式打开 `reports/<年>-issue<NN>.html` 交付（有 `present_files` 等预览工具就用，没有就直接给出文件路径）；**「保存图片」需要能执行页面脚本的真实浏览器**——不支持脚本的预览器点按钮无反应属预期（已知 WorkBuddy 内置预览如此；其他 agent 的内置浏览器一般可以正常保存）；不要尝试内联脚本等客户端方案，交付时主动提示一句「保存图片请用浏览器打开该文件」
+2. 用当前环境可用的预览方式打开 `reports/<年>-issue<NN>.html` 交付（有 `present_files` 等预览工具就用，没有就直接给出文件路径）；「保存图片」需要能执行页面脚本的浏览器：WorkBuddy 内置预览会执行内联 JS 与 CDN 外链脚本，若按钮无响应，先排查下载权限与导出库渲染，再复制 HTML 到浏览器打开重试；交付时主动提示一句「保存图片请用浏览器打开该文件」
 3. 一行复述周期与期号供用户核对（第 N 期 · 周一 ~ 周日 · 红包 ¥X）——防 `--week` 传错周
 4. **禁止在对话中复述统计明细**（名单、红包、卡路里、趋势等分析或列表）——用户可直接在 HTML 中查看，对话重复输出纯属浪费 token
 
@@ -226,22 +238,23 @@ node <skill目录>/scripts/personal.mjs <工作区>/reports [--name 昵称] [-o 
 
 - **首期运行**：无上期归档 → calc 自动兜底（`redPacketTrendText` =「首期 · 暂无对比」、`returnWelcome` = null）
 - **全员达标/请假**：`redPacketTiers` 为空数组、`totalPeople: 0`（模板空表格正常显示合计行）
-- **重复贴/修改贴**：calc 按（昵称, 次数, 项目）三元组自动去重（时长相同）或合并（时长不同），并打印警告
+- **重复贴/修改贴**：calc 按（昵称, 次数, 项目）三元组处理——(分钟, kcal) 完全相同 → 去重、分钟不同 → 补充贴累加分钟与能量（三条以上也不漏算），都只打软告警；**分钟相同却写了不同 kcal 会整期拦下**（见「能量冲突」）
 - **成员退群**：`members.json` 里 `status` 改 `left`，此后不进统计与红包，新归档也不再写入他的累计（旧归档原样保留，回来按新人重算）。**必须等他最后一次打卡那期跑完并归档后再改**——当期接龙里还有他，calc 会按「未知昵称」整期报错
 - **部分请假（`times`）的判定结果**：打卡已够线 →「达标」（不注请假）；打卡不足但打卡 + 请假 ≥ 达标线 →「达标+N请假」；有效次数不足 →「差 N 次」，红包按有效次数走档；0 打卡且请假 ≥ 达标线 → 等同整周豁免（进请假名单 ¥0）；**0 打卡且非整周豁免 → 一律计入未打卡人数**（名单显示「差 N 次」或「未打卡」）。打卡 / 请假 / 未打卡三档人数之和恒等于群总人数
+- **能量来源分工（kcal 与 MET 各管一件事）**：`kcal` 只负责能量——总消耗、累计、周均、峰值、消耗之星、项目燃效 `kcalPerMin` 全部吃它；MET 表仍是项目归一、未知运动校验、强度分档、专精标签，以及燃效之星默认口径 `avgMet` 的唯一依据，**不能因为接龙带了 kcal 就删 MET 表**（把该星切到真实 kcal/min 也一样要保留）。逐条兜底：写了 kcal 用实测，没写用 `MET × 体重 × 时长`；`calorieCoverage` 按 `reported`（纯实测）/ `estimated`（纯兜底）/ `mixed`（合并行）三类分开记并随归档留痕，跨期涨跌可据此分辨口径切换；含折算的合并行绝不会在脚注里被写成「全部实测」。同一项目同分钟贴了不同 kcal、或同一行写了两个第 N 次，calc 整期拦下要求回读原文，不静默丢数据
 - **接龙出现 MET 表外的新项目**（如桨板、攀岩）：`resolveSport` 在 `met` 与 `sportAlias` 均未命中即报「未知运动」，整期不产出，**禁止猜测 MET**。处理流程：
   1. 把新项目报给用户，共同确定项目名与常见写法、MET 值（拿不准参照 Compendium：休闲滑雪≈6.0、滑冰≈5.5、滑板≈5.0）、专精昵称
   2. 在 members.json 补 `met` + `sportNickname` + `sportAlias`（复用同 MET 的别名都写进 alias），体感与 MET 不符再进 `intensityOverride`
   3. 要进入**新群默认骨架**时再同步静态镜像（`members.sample.json` / `data.sample.json` 的 `metSnapshot.met`），清单与测试要求见 `assets/members.sample.md` §五；只给当前群用就只改 members.json
   4. 重跑 Step 0 体检核对反向映射，通过后重跑 calc；动过 sample 就跑 `sample-schema` 测试
-  - **报告里的运动清单是现算的**：强度分组（MET ≥7 high / 4–6.9 mid / <4 low）、专精门槛（10 / 15 / 25）、专精 chip 全部由脚本从 members.json 生成，模板不用改；`intensityOverride` 只挪档位不改卡路里，`sportNickname` 同名即合并专精计数
+  - **报告里的运动清单是现算的**：强度分组（MET ≥7 high / 4–6.9 mid / <4 low）、专精门槛（10 / 15 / 25）、专精 chip 全部由脚本从 members.json 生成，模板不用改；`intensityOverride` 只挪档位、既不改实测 kcal 也不改 MET 兜底值，`sportNickname` 同名即合并专精计数
   - **伞形条目**：一个上位词覆盖多个流派写法时（如「养生操」收太极 / 八段锦 / 站桩），`met` 只建一条、流派全写进它的 `sportAlias` 数组，接龙写哪个都合并计次。哪些已经注册、哪些是伞形词，一律以 members.json 的 `met` / `sportAlias` 为准——未注册项目永远不进入统计
   - **该不该归并是语义判断，代码不参与**：同一动作的不同说法 → 配别名（骑车 = 骑行、步行 = 散步）；动作不同、只是字面接近 → 不配（徒步 ≠ 爬山，各自独立计量）。表外叫法（如「爬坡」）不硬配别名，按上面「新项目」流程走。想让某个叫法独立成项就单独写进 `met`，MET 值相同也照写；只在专精维度靠同一个 `sportNickname` 合并计次的，计量上仍是两条独立条目
 
 ## 维护原则
 
 - **模板 class 名铁律**：所有由数据驱动的 class 后缀（spotlight.type / streakCapsule.style / badge / personaClass / statusClass 等）必须在模板里经 `lower` helper 转全小写输出（helper 由 render.mjs / personal.mjs 注册），CSS 只定义小写类名——html2canvas-pro 的导出管线会把克隆 DOM 的 class 名归一为小写，**驼峰类名页面显示正常、导出图片中静默失效**（破纪录胶囊变紫、里程碑 Lv 掉底色）。数据契约中的枚举原值保持驼峰不变，仅渲染层转小写
-- **计算口径变更**（公式、排序、档位判定等）：改 `scripts/calc.mjs` 或 `scripts/cumulative.mjs`，并在 `test/` 补对应用例（测试命令按 Node 版本二选一，写法见「跨平台兼容」，全绿后再交付）
+- **计算口径变更**（公式、排序、档位判定等）：改 `scripts/calc.mjs` 或 `scripts/cumulative.mjs`，并在 `test/` 补对应用例（测试命令见「跨平台兼容」，全绿后再交付）
 - **模板占位符与字段契约**：改 `templates/template-mobile.html`（同步更新头部注释契约），render.mjs 的校验清单自动跟随，无需改脚本
 - **文案规则变更**（栏目、视角门槛、季节边界、双行分工、字数口径）：只改 `references/insight-writing.md`——SKILL.md 不重复这些规则。若动的是固定栏枚举，同步 render.mjs 的 `INSIGHT_TITLES`
 - **群规则 / 成员档案变更**（达标线、红包、MET、换算、锚点、成员增删改名、体重性别）：只改 `<工作区>/members.json`——calc 每次从磁盘重读；**改完先跑一次 `preflight.mjs`** 再跑 calc。字段口径与「想改什么 → 改哪个键」见 `assets/members.sample.md` §四–§五。改名时新名换进 `nickname`、旧名进 `aliases`，历史累计/连击/徽章自动接续；每期归档是不可变快照，体重/性别只对未来期生效（性别零计算影响），确需重算历史须用户明确坚持并告知逐期重跑成本
@@ -253,4 +266,4 @@ node <skill目录>/scripts/personal.mjs <工作区>/reports [--name 昵称] [-o 
 - **日期**：全程本地时区手工拼接，**禁用 `toISOString()`**（UTC 日期会使东八区零点倒退一天，已由 calc/render 内置实现并有测试锁死）；换行按 `[\r\n]+` 处理 CRLF
 - **前提**：Node ≥ 20 即可跑主链路（preflight / calc / render / personal）与单元测试（目录形式，见下条）。渲染依赖已内嵌（`scripts/vendor/handlebars.cjs`），**无任何安装步骤**，沙箱/离线/目录迁移均可直接运行
 - **自动出图（Step 5）**：`scripts/shot.mjs` 需要 Node ≥ 18 + 本机 Chrome/Edge/Chromium/Brave，零安装。自动探测 macOS/Windows 的浏览器路径与 Linux 的常见路径，也可用 `--chrome <可执行文件绝对路径>` 或环境变量 `CHROME_PATH` / `CHROME_BIN` 指定；找不到浏览器或截图失败时**跳过自动出图**（HTML 与手动保存不受影响），不要为出图安装任何依赖；受限环境（容器 / TRAE 等受管 IDE）首次启动失败会自动用 `--no-sandbox` 再试一次
-- **测试命令**：`node --test <skill目录>/test/`（目录形式，Node 20+ 支持；本机 macOS + Chrome 实测 275 项全绿，无 Chrome 的机器为 274 通过 + 1 跳过）。不要用引号 glob（Node 24 会报 Could not find），也不要用不带引号的 glob（Windows 不展开）；该命令在 macOS（bash/zsh）与 Windows（PowerShell/cmd）都可直接运行，仅数量不同：Windows 共额外跳过 3 项（2 项依赖 POSIX shell 的沙箱降级用例 + 1 项依赖 X_OK 检查的用例），即 272 通过 + 3 跳过
+- **测试命令**：`node --test <skill目录>/test/`（目录形式，Node 20+ 支持）。不要用引号 glob（Node 24 会报 Could not find），也不要用不带引号的 glob（Windows 不展开）；该命令在 macOS（bash/zsh）与 Windows（PowerShell/cmd）都可直接运行。出图用例依赖本机 Chrome、平台用例依赖 POSIX shell / X_OK 检查，环境不具备时自动跳过，通过数以实际输出为准

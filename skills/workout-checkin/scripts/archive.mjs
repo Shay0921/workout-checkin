@@ -6,8 +6,8 @@
  *   - calc.mjs     ：上期 cumulative 没有 presentWeeks 时扫一次，补在册基线
  *   - personal.mjs ：--digest 逐期序列；渲染路径仅在缺 presentWeeks 时兜底
  *
- * 为什么需要这一层：达标率的分母是「个人在册期数」，而早期归档的 cumulative 里没有这个字段，
- * 只能从逐期归档的名单里反推。新归档自带 presentWeeks（链式累加），渲染路径就不再读往期了。
+ * 职责：按逐期归档名单反推「个人在册期数」，供达标率分母使用。
+ * 触发条件：cumulative 缺 presentWeeks 时扫一次；字段齐备时直接读链式累加值。
  */
 
 import { readdirSync, readFileSync } from 'node:fs';

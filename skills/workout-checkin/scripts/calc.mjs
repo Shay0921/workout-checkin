@@ -18,7 +18,7 @@
  *   1. 从磁盘重读 members.json（默认 records.json 同目录，唯一配置真源，杜绝会话缓存漂移）
  *   2. 周期与期号计算（本地时区，全程禁止 toISOString —— 其返回 UTC 日期，东八区会倒退一天）
  *   3. 定位并读取上期归档（本年 issue<NN-1> → 跨年回退扫描上一年最大期号）
- *   4. 昵称/运动归一化、量纲换算、卡路里计算、36 个基础统计字段
+ *   4. 昵称/运动归一化、量纲换算、卡路里计算（接龙实测 kcal 优先 / MET 兜底）、36 个基础统计字段
  *   5. 输出 data.json（36 个基础字段 + insights 空数组占位 + 8 个扩展字段：
  *      cumulative / metSnapshot / spotlights / milestoneCelebrations / calorieKing /
  *      efficiencyStar / progressStar / streakBreaks；insights 由 AI 补写后再渲染）
@@ -42,6 +42,7 @@ import {
   computeMilestoneCelebrations,
   buildMetSnapshot,
   streakCapsule,
+  resolveEfficiencyMetric,
 } from './cumulative.mjs';
 import { buildNicknameIndex, canonicalName, normalizeName } from './nickname.mjs';
 import { loadHistory, buildPresenceIndex } from './archive.mjs';
@@ -216,9 +217,29 @@ export function toMinutes(quantity, unit, convert, sportName = null) {
   }
 }
 
-/** 卡路里 = MET × 体重kg × 时长h，四舍五入取整（逐条计算，最后累加） */
+/**
+ * MET 兜底卡路里 = MET × 体重kg × 时长h，四舍五入取整（逐条计算，最后累加）。
+ * 仅当接龙没写 kcal 时调用；写了实测 kcal 的记录完全不用它，也不要求体重。
+ */
 export function calcCalories(met, weightKg, minutes) {
   return Math.round(met * weightKg * (minutes / 60));
+}
+
+/**
+ * 单条能量真源：接龙实测 kcal 优先，缺失才回落到 MET × 体重 × 时长。
+ * 逐条判定（不是整期统一）——同一周里实测与兜底可以混用，覆盖率见 calorieCoverage。
+ * @param {{kcal: number|null, met: number, weightKg: number|null, minutes: number}} p
+ * @returns {{calories: number, source: 'reported'|'met'}}
+ */
+export function resolveCalories({ kcal, met, weightKg, minutes }) {
+  if (kcal !== null && kcal !== undefined) {
+    return { calories: Math.round(kcal), source: 'reported' };
+  }
+  if (!(typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0)) {
+    // 理论上到不了这里：缺体重且无 kcal 会在流水校验阶段整期拦下
+    throw new Error('体重缺失：本条未标注 kcal，无法用 MET 兜底');
+  }
+  return { calories: calcCalories(met, weightKg, minutes), source: 'met' };
 }
 
 // ---------- 较上期增减角标 ----------
@@ -355,8 +376,14 @@ export function findPrevReport(reportsDir, issueNo, year) {
  *
  * 口径钉死：
  *   - 成员打卡次数 = distinct(昵称, ordinal)；同一次打卡的多个项目各计 1 人次（sportStats）
- *   - (昵称, 次数, 项目) 三元组重复：分钟相同 → 重复贴去重；不同 → 补充贴合并累加
+ *   - (昵称, 次数, 项目) 三元组：(分钟, kcal) 完全相同 → 重复贴去重；分钟不同 → 补充贴合并累加分钟与能量；
+ *     分钟相同但 kcal 不同 → 能量冲突，整期拦下要求回读原文（不静默丢实测值）
  *   - ordinal 为 null → 按出现顺序补入该成员尚未占用的最小正整数
+ *   - session 非 null → 同一行拆出的多条记录共享同一个 ordinal（一行只算 1 次打卡）；
+ *     显式 ordinal 优先于 session，格式 A/B（只写 ordinal / 都不写）行为完全一致
+ *   - 能量：records[].kcal 有值 → 实测 kcal 直接计入；无值 → MET × 体重 × 时长 兜底。
+ *     逐条判定，下游 totalCalories / 累计 / 周均 / 峰值 / 消耗之星全部吃同一个出口
+ *   - 强度维度（loadScore / avgMet / 强度分档 / 专精）仍只由 MET 决定，与能量来源无关
  *   - 请假成员同时有打卡记录 → 以打卡为准（请假标记仅限整周未打卡者）
  *
  * @param {object} p
@@ -424,7 +451,7 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
   }
 
   // --- 打卡流水归一（昵称/项目/单位逐一校验，错误聚合后统一抛出） ---
-  const flows = []; // {memberIdx, ordinal, sportName, met, minutes, weightKg}
+  const flows = []; // {memberIdx, ordinal, session, sportName, met, minutes, weightKg, kcal, calories, calorieSource}
   for (const r of records) {
     let m = null;
     try {
@@ -453,6 +480,28 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
     if (ordinal !== null && (!Number.isInteger(ordinal) || ordinal < 1)) {
       errors.push(
         `次数标注非法「${m.nickname} · ${r.sport}」ordinal=${JSON.stringify(r.ordinal)}（${typeof r.ordinal === 'string' ? '写成了字符串，去掉引号' : '应为正整数 number'}；0 / 负数 / 小数 / 中文序数会让同一次打卡被数成多次，整条省略则由脚本补号）`
+      );
+      continue;
+    }
+    // 行级分组：接龙一行拆出的多条记录写同一个 session，共享 ordinal → 一行只算 1 次打卡。
+    // 显式 ordinal 优先（格式 A/B 照常可用）；session 只在 ordinal 缺失时参与补号。
+    const session = r.session ?? null;
+    if (
+      session !== null &&
+      !((typeof session === 'string' && session.trim() !== '') ||
+        (Number.isInteger(session) && session > 0))
+    ) {
+      errors.push(
+        `分组标注非法「${m.nickname} · ${r.sport}」session=${JSON.stringify(r.session)}（同一行的多条记录写同一个非空字符串或正整数；省略则由脚本按条补号）`
+      );
+      continue;
+    }
+    // 实测卡路里：整条省略 / null = 走 MET 兜底；写了就必须是正数 number（与 quantity 同口径）。
+    // 字符串 "613"、0、负数、"约600" 一律报错，禁止自行估算或用 MET 值冒充实测值。
+    const kcal = r.kcal ?? null;
+    if (kcal !== null && (typeof kcal !== 'number' || !Number.isFinite(kcal) || kcal <= 0)) {
+      errors.push(
+        `卡路里非法「${m.nickname} · ${r.sport}」kcal=${JSON.stringify(r.kcal)}（应为正数 number，如 613；未标注就整条省略，由 MET 兜底）`
       );
       continue;
     }
@@ -488,19 +537,29 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
       );
     }
     const weightKg = m.weightKg ?? defaultWeightKg;
-    if (typeof weightKg !== 'number' || !Number.isFinite(weightKg) || weightKg <= 0) {
+    const validWeight = typeof weightKg === 'number' && Number.isFinite(weightKg) && weightKg > 0;
+    // 只有走 MET 兜底的记录才需要体重；全带实测 kcal 时它完全不参与计算。
+    // Step 0 体检仍强制 defaultWeightKg 为正数（漏写 kcal 时的兜底备用），这里只是纯函数层容错。
+    if (kcal === null && !validWeight) {
       errors.push(
-        `体重无效：成员「${m.nickname}」weightKg=${String(m.weightKg ?? '未填')}，defaultWeightKg=${String(defaultWeightKg ?? '未配置')}——两者都需要正数（给该成员补真实体重，或在 members.json 配 defaultWeightKg）`
+        `体重无效：成员「${m.nickname}」weightKg=${String(m.weightKg ?? '未填')}，defaultWeightKg=${String(defaultWeightKg ?? '未配置')}——本条未标注 kcal，需要正数体重做 MET 兜底（补真实体重 / 配 defaultWeightKg / 或在接龙里补实测 kcal）`
       );
       continue;
     }
+    const { calories, source: calorieSource } = resolveCalories({
+      kcal, met: s.met, weightKg: validWeight ? weightKg : null, minutes,
+    });
     flows.push({
       memberIdx: activeMembers.indexOf(m),
       ordinal,
+      session,
       sportName: s.name,
       met: s.met,
       minutes,
-      weightKg,
+      weightKg: validWeight ? weightKg : null,
+      kcal,
+      calories,
+      calorieSource,
     });
   }
   if (errors.length > 0) {
@@ -508,41 +567,82 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
   }
 
   // --- ordinal 补号：null 依次填入该成员尚未占用的最小正整数 ---
+  // session 非 null 时，同一行拆出的多条记录共享同一个 ordinal → 一行只算 1 次打卡。
+  // 先按组收集显式 ordinal（与记录顺序无关），再补号：显式 ordinal 出现在组内任何位置都生效，
+  // 否则「缺省记录在前、显式 ordinal 在后」会把同一行拆成两次打卡。
   const byMember = new Map();
   for (const f of flows) {
     if (!byMember.has(f.memberIdx)) byMember.set(f.memberIdx, []);
     byMember.get(f.memberIdx).push(f);
   }
   for (const [idx, list] of byMember) {
+    // session → 该行统一的 ordinal（按成员隔离，跨人同名互不影响）
+    const groupOrdinal = new Map();
+    for (const f of list) {
+      if (f.session === null || f.ordinal === null) continue;
+      if (groupOrdinal.has(f.session) && groupOrdinal.get(f.session) !== f.ordinal) {
+        throw new Error(
+          `分组标注冲突：「${nickOf(idx)}」同一行 session=${JSON.stringify(f.session)} 同时写了第 ${groupOrdinal.get(f.session)} 次和第 ${f.ordinal} 次——一行只能算 1 次打卡。请核对接龙原文：拆成两个 session，或统一 ordinal`
+        );
+      }
+      groupOrdinal.set(f.session, f.ordinal);
+    }
     const used = new Set(list.filter((f) => f.ordinal !== null).map((f) => f.ordinal));
     let next = 1;
     let patched = 0;
+    let grouped = 0;
     for (const f of list) {
-      if (f.ordinal === null) {
+      if (f.ordinal !== null) continue; // 显式 ordinal 优先，格式 A/B 照常可用
+      if (f.session !== null && groupOrdinal.has(f.session)) {
+        f.ordinal = groupOrdinal.get(f.session);
+        grouped++;
+      } else {
         while (used.has(next)) next++;
         f.ordinal = next;
         used.add(next);
-        patched++;
+        if (f.session !== null) groupOrdinal.set(f.session, next);
       }
+      patched++;
     }
-    if (patched > 0) console.warn(`⚠ ${nickOf(idx)} 有 ${patched} 条记录缺次数标注，已按出现顺序补号`);
+    if (patched > 0) {
+      console.warn(
+        `⚠ ${nickOf(idx)} 有 ${patched} 条记录缺次数标注，已按出现顺序补号${grouped > 0 ? `（其中 ${grouped} 条按 session 并入同一行，只算 1 次打卡）` : ''}`
+      );
+    }
   }
 
-  // --- 三元组去重/合并：(成员, 次数, 项目) 相同 → 同量去重（重复贴）/ 异量合并（补充贴） ---
+  // --- 三元组去重/合并：(成员, 次数, 项目) 相同 → 完全相同的记录去重，其余按补充贴累加 ---
+  // 判定必须按每条原始记录 (minutes, kcal) 做：只比累计分钟会把第三条误判成重复贴；
+  // 分钟相同而 kcal 不同属于能量冲突，不能静默丢弃。_parts 保留已并入的原始记录清单供逐条比对。
   const merged = new Map();
   for (const f of flows) {
     const key = `${f.memberIdx}|${f.ordinal}|${f.sportName}`;
     const ex = merged.get(key);
     if (!ex) {
-      merged.set(key, { ...f });
-    } else if (ex.minutes !== f.minutes) {
-      ex.minutes += f.minutes;
-      console.warn(`⚠ ${nickOf(f.memberIdx)} 第 ${f.ordinal} 次 ${f.sportName} 存在多条不同时长的记录，已合并为 ${ex.minutes} 分钟`);
-    } else {
-      console.warn(`⚠ ${nickOf(f.memberIdx)} 第 ${f.ordinal} 次 ${f.sportName} 疑似重复贴，已去重`);
+      merged.set(key, { ...f, _parts: [{ minutes: f.minutes, kcal: f.kcal }] });
+      continue;
     }
+    if (ex._parts.some((p) => p.minutes === f.minutes && p.kcal === f.kcal)) {
+      console.warn(`⚠ ${nickOf(f.memberIdx)} 第 ${f.ordinal} 次 ${f.sportName} 疑似重复贴，已去重`);
+      continue;
+    }
+    const sameMinutes = ex._parts.find((p) => p.minutes === f.minutes);
+    if (sameMinutes) {
+      // 分钟相同但实测 kcal 不同：要么是两条独立记录，要么是分组/次数翻译错了。
+      // 无论哪种都不能静默丢掉一条实测值，交回用户确认（禁止猜值、禁止自行分摊）。
+      throw new Error(
+        `能量冲突：「${nickOf(f.memberIdx)}」第 ${f.ordinal} 次 ${f.sportName} 有两条 ${f.minutes} 分钟的记录却写了不同的 kcal（${JSON.stringify(sameMinutes.kcal)} 与 ${JSON.stringify(f.kcal)}）。请核对接龙原文：重复贴就删一条，两次独立打卡就拆成不同 session / ordinal`
+      );
+    }
+    // 补充贴：分钟与能量同步累加；loadScore 由合并后的 minutes 自然跟随
+    ex.minutes += f.minutes;
+    ex.calories += f.calories;
+    ex.kcal = ex.kcal === null || f.kcal === null ? null : ex.kcal + f.kcal;
+    ex.calorieSource = ex.calorieSource === f.calorieSource ? ex.calorieSource : 'mixed';
+    ex._parts.push({ minutes: f.minutes, kcal: f.kcal });
+    console.warn(`⚠ ${nickOf(f.memberIdx)} 第 ${f.ordinal} 次 ${f.sportName} 存在多条不同时长的记录，已合并为 ${ex.minutes} 分钟`);
   }
-  const finalFlows = [...merged.values()];
+  const finalFlows = [...merged.values()].map(({ _parts, ...f }) => f);
 
   // 单人单周合计异常（>1200 分钟 = 20 小时）→ 软告警。正常单人单周远低于此量级，
   // 设 20 小时只用于兜住单位误读。
@@ -564,8 +664,8 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
       ordinals: new Set(),
       totalMinutes: 0,
       totalCalories: 0,
-      loadScore: 0, // Σ(MET × 分钟)：体重无关的训练负荷分，燃效之星/平均强度专用
-      weightKg: null, // 取自打卡流水（含 defaultWeightKg 兜底），供 kcal/min → MET 换算
+      loadScore: 0, // Σ(MET × 分钟)：体重无关的训练负荷分，默认口径燃效之星/平均强度专用
+      weightKg: null, // 取自打卡流水（含 defaultWeightKg 兜底）；只作 MET 兜底追溯/审计，不参与任何星级判定
       sports: {}, // 项目分布·人次（原始项目名 → 次数），cumulative 按 sportNickname 聚合
     };
   });
@@ -573,8 +673,8 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
     const st = memberStats[f.memberIdx];
     st.ordinals.add(f.ordinal);
     st.totalMinutes += f.minutes;
-    st.totalCalories += calcCalories(f.met, f.weightKg, f.minutes);
-    st.loadScore += f.met * f.minutes;
+    st.totalCalories += f.calories; // 实测 kcal 优先 / MET 兜底，唯一出口
+    st.loadScore += f.met * f.minutes; // 强度维度仍只由 MET 决定，不随能量来源变化
     st.weightKg = f.weightKg;
     st.sports[f.sportName] = (st.sports[f.sportName] || 0) + 1;
   }
@@ -659,10 +759,7 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
   for (const f of finalFlows) {
     sportCount.set(f.sportName, (sportCount.get(f.sportName) ?? 0) + 1);
     sportMinutes.set(f.sportName, (sportMinutes.get(f.sportName) ?? 0) + f.minutes);
-    sportCalories.set(
-      f.sportName,
-      (sportCalories.get(f.sportName) ?? 0) + calcCalories(f.met, f.weightKg, f.minutes)
-    );
+    sportCalories.set(f.sportName, (sportCalories.get(f.sportName) ?? 0) + f.calories);
   }
   // 人次降序，同人次按名称码点升序（保证跨运行确定性）
   const sportEntries = [...sportCount.entries()].sort(
@@ -783,6 +880,27 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
     sports: s.sports,
   }));
 
+  // --- 卡路里来源覆盖率 ---
+  // 三类分开数：纯实测 / 纯 MET 兜底 / 合并行（一条记录里既有实测又有兜底）。
+  // 合并行绝不能算进「全部实测」——否则脚注会宣称全期都是手环数值，实际混了估算。
+  // 写进归档后下期仍可追溯本期能量来源，跨期涨跌不会误读成训练量变化。
+  const reportedUnits = finalFlows.filter((f) => f.calorieSource === 'reported').length;
+  const estimatedUnits = finalFlows.filter((f) => f.calorieSource === 'met').length;
+  const mixedUnits = finalFlows.length - reportedUnits - estimatedUnits;
+  const calorieCoverage = {
+    reported: reportedUnits,
+    estimated: estimatedUnits,
+    mixed: mixedUnits,
+    total: finalFlows.length,
+    note: finalFlows.length === 0
+      ? '* 卡路里优先用接龙实测值，未标注的按项目与时长折算'
+      : estimatedUnits === 0 && mixedUnits === 0
+        ? `* 卡路里全部取接龙实测值（${reportedUnits}/${finalFlows.length} 条实测）`
+        : estimatedUnits === 0
+          ? `* 卡路里优先用实测值，${mixedUnits} 条合并记录含 MET 折算（纯实测 ${reportedUnits}/${finalFlows.length} 条）`
+          : `* 卡路里优先用实测值，${estimatedUnits} 条未标注按项目与时长折算${mixedUnits > 0 ? `，另 ${mixedUnits} 条合并记录含折算` : ''}（纯实测 ${reportedUnits}/${finalFlows.length} 条）`,
+  };
+
   // --- 组装输出（字段顺序对齐模板契约，便于人工阅读） ---
   return {
     groupName: group,
@@ -822,6 +940,7 @@ export function buildStats({ records, leaves = [], config, weekWindow, issueNo, 
     totalCaloriesSum,
     totalSessions,
     avgMinutesPerSession,
+    calorieCoverage,
 
     leaveList,
 
@@ -872,8 +991,8 @@ function main() {
     console.error(`✗ 未找到 members.json：${membersPath}`);
     console.error(`  默认读取 records.json 同目录的 members.json（${defaultMembersPath}），也可用 --members 指定。`);
     if (existsSync(LEGACY_MEMBERS_PATH) && LEGACY_MEMBERS_PATH !== membersPath) {
-      console.error(`  检测到旧版配置：${LEGACY_MEMBERS_PATH}`);
-      console.error(`  请迁移到 ${defaultMembersPath}（新版本不再默认读取 skill 目录内配置）。`);
+      console.error(`  检测到 skill 目录内的配置副本：${LEGACY_MEMBERS_PATH}`);
+      console.error(`  请迁移到 ${defaultMembersPath}（配置统一从工作区读取）。`);
     } else {
       console.error('  首次使用请先按 SKILL.md 的「首次初始化 members.json」流程生成配置。');
     }
@@ -1041,14 +1160,17 @@ function main() {
     console.error('  未知昵称 → 与用户确认是否新成员（改 members.json 后重跑）；未知运动/单位 → 修正 records.json 后重跑；');
     console.error('  数量非法 → quantity 改成纯正数（不带单位、不用逗号小数点、不为 0/负数），回读接龙原文核对；');
     console.error('  次数标注非法 → ordinal 改成正整数 number（去掉引号）；接龙没写次数就整条省略，由脚本补号。');
+    console.error('  卡路里非法 → kcal 改成纯正数 number（如 613）；接龙没写 kcal 就整条省略，由 MET 兜底。');
+    console.error('  分组标注非法 → 同一行的多条记录写同一个 session（非空字符串或正整数），或整条省略。');
+    console.error('  能量冲突 / 分组标注冲突 → 同一项目同分钟却写了不同 kcal，或同一行写了两个「第N次」：回读接龙原文，重复贴删一条、独立打卡拆成不同 session / ordinal；禁止猜值或自行分摊。');
     process.exit(1);
   }
 
   // 5.5 链式累计 cumulative + spotlight + metSnapshot（不动 buildStats 函数体）
   const memberStats = data.memberStats;
   const prevCumulative = prevReport?.cumulative || null;
-  // presentWeeks 迁移：上期归档由旧版 calc 生成时没有这个字段，直接按 0 起链会把老成员
-  // 全当成本期新入群（每人 presentWeeks=1），达标率被系统性抬高 → 先扫归档补一次历史基线。
+  // presentWeeks 迁移：归档缺少该字段时，直接按 0 起链会把老成员
+  // 全当成本期新入群（每人 presentWeeks=1），达标率被系统性抬高 → 先扫归档补一次基线。
   // 缺哪个补哪个：在册基线只在缺 presentWeeks 时才覆盖链式值——归档本身缺期时扫描值偏小，
   // 无条件覆盖会把本来正确的在册期数腰斩。判断一律用原始归档 foundPrevReport。
   const migrationGaps = findArchiveMigrationGaps(foundPrevReport);
@@ -1070,7 +1192,8 @@ function main() {
     firstWeekStart: migrationGaps?.includes('group.firstWeekStart') ? archiveBaseline.firstWeekStart : null,
     weekStart: weekWindow.weekStart,
   });
-  const spotlights = computeSpotlights({ memberStats, prevCumulative });
+  const efficiencyMetric = resolveEfficiencyMetric(config);
+  const spotlights = computeSpotlights({ memberStats, prevCumulative, config });
   const metSnapshot = buildMetSnapshot(config);
   const milestoneCelebrations = computeMilestoneCelebrations({ cumulative, prevCumulative, config });
 
@@ -1095,7 +1218,7 @@ function main() {
 
   // 模块 06 激励卡片数据：消耗之星 / 燃效之星 / 进步之星（统一走 computeStars 单一真源，
   // tie-break 口径与 spotlight/蝉联一致；独立于 spotlight 优先级，永远报真实第一）
-  const stars = computeStars({ memberStats, prevCumulative });
+  const stars = computeStars({ memberStats, prevCumulative, efficiencyMetric });
 
   // 消耗之星：本周卡路里总量第一
   data.calorieKing = stars.calorieKing ? { ...stars.calorieKing } : null;
@@ -1105,13 +1228,20 @@ function main() {
     data.calorieKing.streakWeeks = calStreak.weeks;
   }
 
-  // 燃效之星：本周平均训练强度（avgMET，体重归一）第一；口径见 cumulative.computeStars
+  // 燃效之星：口径由 members.json 的 efficiencyStarMetric 决定（默认 avgMET 体重归一，
+  // 可切真实 kcal/min）；metric / unit 随 data 进归档，下期与洞察都能分辨榜单比的是什么。
   data.efficiencyStar = stars.efficiencyStar
     ? {
         nickname: stars.efficiencyStar.nickname,
-        avgMet: Math.round(stars.efficiencyStar.avgMet * 10) / 10,
+        metric: stars.efficiencyStar.metric,
+        value: Math.round(stars.efficiencyStar.value * 10) / 10,
+        unit: stars.efficiencyStar.unit,
       }
     : null;
+  // avgMet 模式另附该得主真实 kcal/min（供洞察/审计取材，不参与排名、不进模板布局）
+  if (data.efficiencyStar && efficiencyMetric === 'avgMet') {
+    data.efficiencyStar.realKcalPerMin = Math.round(stars.efficiencyStar.realKcalPerMin * 10) / 10;
+  }
   // 蝉联周数（≥3 周显示「蝉联 N 周」角标）
   const effStreak = cumulative.group.efficiencyStarStreak;
   if (data.efficiencyStar && effStreak.nickname === data.efficiencyStar.nickname && effStreak.weeks >= 3) {
@@ -1119,12 +1249,13 @@ function main() {
   }
 
   // 进步之星：需 ≥4 期历史，相对个人前 3 周 kcal/min 均值正提升最大（并列取本周平均强度更高者）
-  // 提升率基于 kcal/min（同一人体重约掉）；展示值统一换算成 MET，与燃效之星同单位
+  // 判定与展示统一为真实 kcal/min：自己跟自己比体重约掉，不做 MET 换算
   data.progressStar = stars.progressStar
     ? {
         nickname: stars.progressStar.nickname,
-        prevAvgMet: Math.round(stars.progressStar.prevAvgMet * 10) / 10,
-        curMet: Math.round(stars.progressStar.curMet * 10) / 10,
+        prevValue: Math.round(stars.progressStar.prevKcalPerMin * 10) / 10,
+        curValue: Math.round(stars.progressStar.curKcalPerMin * 10) / 10,
+        unit: 'kcal/min',
         improvementPct: Math.round(stars.progressStar.improvement * 100),
       }
     : null;
@@ -1153,6 +1284,9 @@ function main() {
   console.log(`  成员 ${data.totalMembers} 人 · 打卡 ${data.checkinCount} · 请假 ${data.leaveCount} · 未打卡 ${data.absentCount}`);
   console.log(`  达标 ${data.metCount} 人（${data.targetRate}%）· 红包 ¥${data.redPacketTotal}`
     + (minCheckinsOverride !== null ? `（特殊达标线 ${minCheckinsOverride} 次/周，--min-checkins 覆盖）` : ''));
+  const cc = data.calorieCoverage;
+  console.log(`  卡路里：纯实测 ${cc.reported} 条 · MET 兜底 ${cc.estimated} 条 · 混合 ${cc.mixed} 条（共 ${cc.total} 条）`);
+  console.log(`  燃效之星口径：${efficiencyMetric === 'kcalPerMin' ? '真实 kcal/min（体重/设备差异会进榜）' : '平均强度 avgMET（体重归一，默认）'}；进步之星展示真实 kcal/min`);
   if (prevReport) console.log(`  上期归档：第 ${prevReport.issueNo} 期（趋势对比已启用）`);
   else console.log('  无上期归档：按首期处理（趋势字段兜底）');
   console.log('  ⚠ insights 为空数组：需按 references/insight-writing.md §1 契约补写 6-9 条后再执行 render.mjs');

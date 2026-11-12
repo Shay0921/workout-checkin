@@ -191,9 +191,26 @@ function main() {
     process.exit(1);
   }
 
-  // 2. 提取模板占位符并校验数据
+  // 重渲染缺少新字段的归档时，只在「渲染视图」里补齐展示值。绝不写回 data ——
+  // data 是归档的内容来源，补进去会把推算出的覆盖率 / 星级字段写进不可变快照。
+  // 带 prevAvgMet/curMet 的 progressStar 是 MET 展示值，unit 必须补 'MET' 而非 'kcal/min'。
+  const patches = {};
+  if (!(data.calorieCoverage && typeof data.calorieCoverage.note === 'string')) {
+    patches.calorieCoverage = { reported: 0, estimated: 0, mixed: 0, total: 0, note: '* 卡路里按项目与时长折算' };
+  }
+  const eff = data.efficiencyStar;
+  if (eff && typeof eff.avgMet === 'number' && typeof eff.value !== 'number') {
+    patches.efficiencyStar = { ...eff, metric: 'avgMet', value: eff.avgMet, unit: 'MET' };
+  }
+  const prog = data.progressStar;
+  if (prog && typeof prog.prevAvgMet === 'number' && typeof prog.prevValue !== 'number') {
+    patches.progressStar = { ...prog, prevValue: prog.prevAvgMet, curValue: prog.curMet, unit: 'MET' };
+  }
+  const renderData = Object.keys(patches).length > 0 ? { ...data, ...patches } : data;
+
+  // 2. 提取模板占位符并校验数据（用渲染视图校验，避免缺新字段被误判 missing）
   const required = extractTopLevelVars(tplRaw);
-  const { missing, extra } = validateData(data, required);
+  const { missing, extra } = validateData(renderData, required);
   if (missing.length > 0) {
     console.error(`✗ 数据缺失 ${missing.length} 个模板必需字段（见模板头部契约）：`);
     missing.forEach((k) => console.error(`  - ${k}`));
@@ -312,7 +329,7 @@ function main() {
     return cmp[op] ? options.fn(this) : options.inverse(this);
   });
   const template = Handlebars.compile(tplForRender);
-  const html = template(data);
+  const html = template(renderData);
 
   // 4. 残留占位符检查（正常数据下不应出现任何 {{）
   const leftover = findLeftoverPlaceholders(html);

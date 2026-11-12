@@ -485,7 +485,8 @@
           <span class="tag tag-relax"><span class="pill-txt">松弛系 · 低强度 &gt; 60%</span></span>
           <span class="tag tag-balance"><span class="pill-txt">均衡系 · 其余情况</span></span>
         </div>
-        <div class="persona-rule">按全部打卡的强度占比判定分型，三档互斥、先命中先得，介于三者之间显示均衡系；强度档默认按 MET 划分；同一项目累计打卡达到门槛即点亮专精标签。</div>
+        <div class="persona-rule">按全部打卡的<strong>项目人次</strong>强度占比判定分型（60% 是人次占比，不是卡路里或时长占比），三档互斥、先命中先得，介于三者之间显示均衡系；强度档按 MET 划分、不受接龙自带 kcal 影响；同一项目累计打卡达到门槛即点亮专精标签。</div>
+        <div class="persona-rule" style="margin-top: 6px;">排行表的「燃效 kcal/min」= 本人<strong>累计消耗 kcal ÷ 累计分钟</strong>，是全程真实能量速率，不用 MET；与周报「燃效之星」（本周，默认按平均强度 MET 排名，可配置切真实 kcal/min）、周报项目表的 kcalPerMin（本周单项目）三者口径不同，不能互相代入或当成训练强度。</div>
         {{#each sportGroups}}
         <div class="sport-group">
           <div class="sport-group-head">{{label}} · {{threshold}}</div>

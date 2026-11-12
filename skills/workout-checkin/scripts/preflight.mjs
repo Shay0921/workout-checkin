@@ -7,7 +7,7 @@
  *
  * 作用：在翻译接龙、跑 calc 之前，一次性确认「能不能开工」：
  *   1. members.json 是否存在（默认 <工作区>/members.json；不存在 = 首次使用 → 退出码 2，提示走 Step 2.5 初始化）
- *   2. 配置键是否齐全、类型是否合法、占位符是否已替换；convert / defaultWeightKg 也在此拦下，避免 calc 遇到 floor/km/count 或缺体重时抛裸 TypeError
+ *   2. 配置键是否齐全、类型是否合法、占位符是否已替换；convert / defaultWeightKg / efficiencyStarMetric 也在此拦下，避免 calc 遇到 floor/km/count、缺体重或燃效口径笔误时抛裸 TypeError / 静默换榜
  *   3. 成员/别名是否冲突（按归一化后的 key 检查重复昵称、别名撞车）
  *   4. met 与 sportAlias / sportNickname / intensityOverride 是否自洽
  *   5. 渲染依赖 handlebars 是否内嵌完整（scripts/vendor/handlebars.cjs）
@@ -117,9 +117,22 @@ function checkConfig(config) {
 
   // ── defaultWeightKg（成员 weightKg 可缺省，但必须有正数默认值兜底）
   if (!isPositiveNumber(config.defaultWeightKg)) {
-    bad('defaultWeightKg 缺失或非正数（成员未填 weightKg 时按此默认体重换算）');
+    bad('defaultWeightKg 缺失或非正数（成员未填 weightKg 且接龙没写 kcal 时，按此默认体重做 MET 兜底；即便本期全带 kcal 也要保留默认值）');
   } else {
     ok(`defaultWeightKg = ${config.defaultWeightKg}`);
+  }
+
+  // ── efficiencyStarMetric：燃效之星口径开关（可选）。缺失/拼错一律按默认 avgMet，
+  //    避免配置笔误悄悄把「比强度」换成「比体重」；与 cumulative.resolveEfficiencyMetric 同规则。
+  const effMetric = config.efficiencyStarMetric;
+  if (effMetric === undefined || effMetric === null) {
+    ok('efficiencyStarMetric 未配置 → 默认 avgMet（平均训练强度，体重归一）');
+  } else if (effMetric === 'avgMet') {
+    ok('efficiencyStarMetric = avgMet（平均训练强度，体重归一）');
+  } else if (effMetric === 'kcalPerMin') {
+    ok('efficiencyStarMetric = kcalPerMin（真实消耗速率；体重/设备差异会进榜）');
+  } else {
+    warn(`efficiencyStarMetric = ${String(effMetric)} 非法（只接受 avgMet / kcalPerMin），已按默认 avgMet 处理`);
   }
 
   // ── convert：量纲换算系数必须在体检阶段拦下，避免 calc 遇到 floor/km/count 才抛裸 TypeError
@@ -483,8 +496,8 @@ function main() {
   if (!existsSync(membersPath)) {
     console.log(`${BAD} 未找到 members.json：${membersPath}`);
     if (existsSync(LEGACY_MEMBERS_PATH) && LEGACY_MEMBERS_PATH !== membersPath) {
-      console.log(`  ${WARN} 检测到旧版配置：${LEGACY_MEMBERS_PATH}`);
-      console.log(`     请迁移到 ${membersPath}（新版本不再默认读取 skill 目录内配置）。`);
+      console.log(`  ${WARN} 检测到 skill 目录内的配置副本：${LEGACY_MEMBERS_PATH}`);
+      console.log(`     请迁移到 ${membersPath}（配置统一从工作区读取）。`);
     }
     console.log('────────────────────────────');
     console.log('结论：首次使用，先初始化配置（Step 2.5）');

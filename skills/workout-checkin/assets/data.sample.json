@@ -21,6 +21,13 @@
   "absentAngle": 108,
   "redPacketTotal": 40,
   "redPacketTrendText": "较上期 −¥40",
+  "calorieCoverage": {
+    "reported": 0,
+    "estimated": 14,
+    "mixed": 0,
+    "total": 14,
+    "note": "* 卡路里优先用实测值，14 条未标注按项目与时长折算（纯实测 0/14 条）"
+  },
   "sportStats": [
     {
       "name": "羽毛球",
@@ -248,7 +255,7 @@
     },
     {
       "title": "强度观察",
-      "content": "燃效是跑步和游泳撑起来的（都到 8），散步 3.5 在往下拉——高强度人次刚过半。"
+      "content": "每分钟消耗是跑步和游泳撑起来的（都到 8 kcal/min），散步 3.5 在往下拉——这是能量口径，强度档另看 MET。"
     },
     {
       "title": "连击动态",
@@ -278,7 +285,10 @@
   },
   "efficiencyStar": {
     "nickname": "小张",
-    "avgMet": 8.1
+    "metric": "avgMet",
+    "value": 8.1,
+    "unit": "MET",
+    "realKcalPerMin": 8.1
   },
   "progressStar": null,
   "milestoneCelebrations": [

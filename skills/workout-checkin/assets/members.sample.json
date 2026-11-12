@@ -25,6 +25,7 @@
     "旅游"
   ],
   "defaultWeightKg": 60,
+  "efficiencyStarMetric": "avgMet",
   "convert": {
     "climbPerFloorMin": 0.4,
     "kmPerMin": {

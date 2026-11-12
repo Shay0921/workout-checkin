@@ -102,7 +102,7 @@ test('presentWeeks：迁移基线覆盖「prev 缺字段」的 0，避免老成�
   assert.equal(cum.members.小恺.presentWeeks, 3, '基线 2（第 3、4 期在册）+ 本期 1 = 3');
 });
 
-/** 造一期最简归档；cumulative 传 null 表示不写该字段（模拟旧版 calc 产物） */
+/** 造一期最简归档；cumulative 传 null 表示不写该字段（模拟结构不完整的归档） */
 function archive({ no, weekStart, weekEnd, nicknames, cumulative }) {
   return {
     issueNo: no,
@@ -133,7 +133,7 @@ test('calc 迁移：旧归档缺 presentWeeks 时扫一次归档补齐，新人�
   const reports = join(ws, 'reports');
   mkdirSync(reports, { recursive: true });
   try {
-    // 第 1 期：只有阿明、小芳在册，且归档由旧版生成（cumulative 无 presentWeeks）
+    // 第 1 期：只有阿明、小芳在册，且归档缺少 presentWeeks
     writeFileSync(
       join(reports, '2026-issue01.json'),
       JSON.stringify(
@@ -251,7 +251,7 @@ test('迁移判定：归档缺哪个字段补哪个（原始归档口径，不�
     'presentWeeks',
     'group.firstWeekStart',
   ]);
-  // canonicalize 之后 presentWeeks 会是 0，只有原始归档能看出它是旧版产物
+  // canonicalize 之后 presentWeeks 会是 0，只有原始归档能看出它缺少该字段
   assert.deepEqual(findArchiveMigrationGaps({ cumulative: { group: { firstWeekStart: '2026-10-05' }, members: { 甲: { ...member, presentWeeks: 1 } } } }), null);
   assert.deepEqual(
     findArchiveMigrationGaps({ cumulative: { group: {}, members: { 甲: { ...member, presentWeeks: 1 } } } }),

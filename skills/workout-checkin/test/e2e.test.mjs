@@ -204,6 +204,200 @@ test('e2e：接龙 → calc → 补 insights → render → HTML + 归档 全流
   }
 });
 
+test('e2e：格式 C 接龙（实测 kcal + 不写第几次）→ 周报 → 归档全链路', () => {
+  const ws = mkdtempSync(resolve(tmpdir(), 'wk-e2e-kcal-'));
+  try {
+    const cfg = JSON.parse(readFileSync(resolve(fixturesDir, 'members.test.json'), 'utf-8'));
+    // 新格式：一行一次打卡、自带 kcal、不写「第几次」；L2 一行两项目共享 session
+    const records = {
+      weekStart: '2026-10-12',
+      records: [
+        { nickname: '阿明', session: 'L1', sport: '游泳', quantity: 53, unit: 'min', kcal: 613 },
+        { nickname: '阿明', session: 'L2', sport: '自由活动', quantity: 46, unit: 'min', kcal: 210 },
+        { nickname: '阿明', session: 'L2', sport: '羽毛球', quantity: 1.85, unit: 'h', kcal: 570 },
+        { nickname: '小芳', session: 'L3', sport: '跑步', quantity: 30, unit: 'min' }, // 无 kcal → MET 兜底
+      ],
+      leaves: [{ nickname: '小刘', reason: '本周请假' }],
+    };
+    writeFileSync(resolve(ws, 'records.json'), JSON.stringify(records, null, 2), 'utf-8');
+    mkdirSync(resolve(ws, 'reports'), { recursive: true });
+    copyFileSync(resolve(fixturesDir, 'prev-report.json'), resolve(ws, 'reports/2026-issue01.json'));
+
+    const dataPath = resolve(ws, 'data.json');
+    const calc = exec(calcPath, [
+      resolve(ws, 'records.json'),
+      '--members', resolve(fixturesDir, 'members.test.json'),
+      '--week', '2026-10-15', '-o', dataPath,
+    ]);
+    assert.equal(calc.status, 0, `calc 失败：${calc.stderr}`);
+    const data = JSON.parse(readFileSync(dataPath, 'utf-8'));
+
+    const xfWeight = cfg.members.find((m) => m.nickname === '小芳').weightKg;
+    const fallback = Math.round(cfg.met['跑步'] * xfWeight * 0.5);
+    const amingKcal = 613 + 210 + 570;
+    assert.equal(data.calorieCoverage.reported, 3);
+    assert.equal(data.calorieCoverage.estimated, 1);
+    assert.equal(data.calorieCoverage.mixed, 0);
+    assert.equal(data.calorieCoverage.total, 4);
+    assert.equal(data.totalCaloriesSum, amingKcal + fallback);
+    const amingRow = data.checkinList.find((r) => r.nickname === '阿明');
+    assert.equal(amingRow.checkinCount, 2, 'L2 一行两项目仍只算 1 次打卡');
+    assert.equal(amingRow.totalCalories, amingKcal);
+    assert.equal(data.totalSessions, 4, '4 条流水 = 4 个项目人次');
+    assert.equal(data.efficiencyStar.metric, 'avgMet', '未配置开关时仍是体重归一的平均强度');
+    assert.equal(data.efficiencyStar.unit, 'MET');
+    assert.equal(typeof data.efficiencyStar.value, 'number');
+    assert.equal(typeof data.efficiencyStar.realKcalPerMin, 'number', '默认模式附真实 kcal/min 供洞察取材');
+
+    // 补 insights（断更时按契约插入条件栏）后渲染
+    const contents = [
+      '门槛没咬住人，达标面比上期收了一圈。',
+      '人次没变，单次时长往上抬了一截。',
+      '游泳的燃效把整体拉高，散步还在往下拽。',
+      '版图还是那四种，宽度没变、厚度往游泳集中。',
+      '这笔能量换成通勤里程，够绕城一圈还剩。',
+      '红包池没清零，罚款面比上期窄了一点。',
+      '小张此前连击中断，本周重新起链。',
+    ];
+    const titles = data.streakBreaks?.length > 0
+      ? [...INSIGHT_TITLES.slice(0, 3), COND_TITLE, ...INSIGHT_TITLES.slice(3)]
+      : INSIGHT_TITLES;
+    data.insights = titles.map((title, i) => ({ title, content: contents[i] }));
+    writeFileSync(dataPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    const htmlPath = resolve(ws, 'reports/2026-issue02.html');
+    const render = exec(renderPath, [dataPath, '-o', htmlPath]);
+    assert.equal(render.status, 0, `render 失败：${render.stderr}`);
+    const html = readFileSync(htmlPath, 'utf-8');
+    assert.ok(html.includes('纯实测 3/4 条'), '周报表格脚注应标注实测覆盖率');
+    assert.ok(html.includes('实测 ') && html.includes('kcal/min'), '燃效之星默认 MET 口径下应附真实消耗速率小字');
+    assert.ok(!/\{\{[^}]*\}\}/.test(html), '渲染结果不应残留占位符');
+
+    const archive = JSON.parse(readFileSync(resolve(ws, 'reports/2026-issue02.json'), 'utf-8'));
+    assert.equal(archive.calorieCoverage.reported, 3, '覆盖率随归档留痕');
+    assert.equal(archive.totalCaloriesSum, amingKcal + fallback);
+    assert.equal(archive.records.records[0].kcal, 613, '归档内嵌原始流水，实测值可追溯');
+    const amingRecent = archive.cumulative.members['阿明'].recentWeeks.slice(-1)[0];
+    assert.equal(amingRecent.calories, amingKcal, '累计快照本期消耗应取实测 kcal');
+
+    // 缺少 calorieCoverage 的归档重渲染：脚注补 MET 兜底说明，
+    // 补齐值只能进渲染视图，绝不能写回归档把推算出的覆盖率塞进快照。
+    const legacy = JSON.parse(readFileSync(dataPath, 'utf-8'));
+    delete legacy.calorieCoverage;
+    // 星级改用 MET 展示结构：efficiencyStar.avgMet / progressStar.prevAvgMet+curMet
+    legacy.efficiencyStar = { nickname: legacy.efficiencyStar.nickname, avgMet: 8.1 };
+    legacy.progressStar = { nickname: '阿明', prevAvgMet: 6.2, curMet: 8.4, improvementPct: 35 };
+    const legacyDataPath = resolve(ws, 'legacy-data.json');
+    writeFileSync(legacyDataPath, JSON.stringify(legacy, null, 2), 'utf-8');
+    mkdirSync(resolve(ws, 'legacy'), { recursive: true });
+    const legacyHtml = resolve(ws, 'legacy/2026-issue02.html');
+    const legacyRender = exec(renderPath, [legacyDataPath, '-o', legacyHtml]);
+    assert.equal(legacyRender.status, 0, `缺少新字段的归档重渲染失败：${legacyRender.stderr}`);
+    const legacyHtmlText = readFileSync(legacyHtml, 'utf-8');
+    assert.ok(legacyHtmlText.includes('* 卡路里按项目与时长折算'), '缺少覆盖率字段时应补上 MET 口径脚注');
+    assert.ok(legacyHtmlText.includes('8.1') && legacyHtmlText.includes('MET'), 'avgMet 字段仍按 MET 展示');
+    assert.ok(legacyHtmlText.includes('6.2 → 8.4'), 'MET 展示值按原语义呈现，不得错标 kcal/min');
+    assert.ok(!/\{\{[^}]*\}\}/.test(legacyHtmlText), '兼容渲染不得残留占位符');
+    const legacyArchive = JSON.parse(readFileSync(resolve(ws, 'legacy/2026-issue02.json'), 'utf-8'));
+    assert.equal(
+      'calorieCoverage' in legacyArchive,
+      false,
+      '兼容兜底不得写进归档，历史快照必须原样保留'
+    );
+    assert.equal('metric' in legacyArchive.efficiencyStar, false, '兼容兜底不得把 metric 写回归档');
+    assert.equal('unit' in legacyArchive.efficiencyStar, false, '兼容兜底不得把 unit 写回归档');
+    assert.equal('prevValue' in legacyArchive.progressStar, false, '兼容兜底不得把 prevValue 写回归档');
+    assert.equal(
+      JSON.parse(readFileSync(resolve(ws, 'reports/2026-issue02.json'), 'utf-8')).calorieCoverage.reported,
+      3,
+      '本期主归档仍是实测口径，未被重渲染覆盖'
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test('e2e：efficiencyStarMetric=kcalPerMin 全链路改用真实消耗速率，其余数值不变', () => {
+  const ws = mkdtempSync(resolve(tmpdir(), 'wk-e2e-metric-'));
+  try {
+    const cfg = JSON.parse(readFileSync(resolve(fixturesDir, 'members.test.json'), 'utf-8'));
+    const realCfgPath = resolve(ws, 'members-real.json');
+    writeFileSync(realCfgPath, JSON.stringify({ ...cfg, efficiencyStarMetric: 'kcalPerMin' }, null, 2), 'utf-8');
+
+    // 强度与真实消耗速率排序相反：阿明 avgMet 8 但只有 3.0 kcal/min；小芳 avgMet 3.5 却有 12.0
+    const records = {
+      weekStart: '2026-10-12',
+      records: [
+        { nickname: '阿明', sport: '跑步', quantity: 100, unit: 'min', kcal: 300 },
+        { nickname: '小芳', sport: '散步', quantity: 100, unit: 'min', kcal: 1200 },
+      ],
+      leaves: [],
+    };
+    const recordsPath = resolve(ws, 'records.json');
+    writeFileSync(recordsPath, JSON.stringify(records, null, 2), 'utf-8');
+    mkdirSync(resolve(ws, 'reports'), { recursive: true });
+    copyFileSync(resolve(fixturesDir, 'prev-report.json'), resolve(ws, 'reports/2026-issue01.json'));
+
+    const runCalc = (membersPath, outName) => {
+      const out = resolve(ws, outName);
+      const r = exec(calcPath, [recordsPath, '--members', membersPath, '--week', '2026-10-15', '-o', out]);
+      assert.equal(r.status, 0, `calc 失败：${r.stderr}`);
+      return { path: out, data: JSON.parse(readFileSync(out, 'utf-8')) };
+    };
+    const base = runCalc(resolve(fixturesDir, 'members.test.json'), 'data-base.json');
+    const real = runCalc(realCfgPath, 'data-real.json');
+
+    assert.equal(base.data.efficiencyStar.metric, 'avgMet', '未配置时默认平均强度');
+    assert.equal(base.data.efficiencyStar.nickname, '阿明');
+    assert.equal(base.data.efficiencyStar.value, 8);
+    assert.equal(base.data.efficiencyStar.realKcalPerMin, 3, '默认模式附得主真实速率，不是榜首速率');
+    assert.equal(real.data.efficiencyStar.metric, 'kcalPerMin');
+    assert.equal(real.data.efficiencyStar.nickname, '小芳');
+    assert.equal(real.data.efficiencyStar.value, 12);
+    assert.equal(real.data.efficiencyStar.unit, 'kcal/min');
+    assert.equal(real.data.efficiencyStar.realKcalPerMin, undefined, '真实模式不重复附带小字字段');
+    assert.equal(real.data.cumulative.group.efficiencyStarStreak.nickname, '小芳', '蝉联统计必须跟同一口径');
+
+    // 除星级得主/口径外所有数值保持一致：能量、覆盖率、历史周记录、消耗之星
+    assert.equal(real.data.totalCaloriesSum, base.data.totalCaloriesSum);
+    assert.deepEqual(real.data.calorieCoverage, base.data.calorieCoverage);
+    assert.deepEqual(
+      real.data.cumulative.members['阿明'].recentWeeks,
+      base.data.cumulative.members['阿明'].recentWeeks,
+      '历史归档不得因口径切换被重算'
+    );
+    assert.deepEqual(real.data.calorieKing, base.data.calorieKing);
+
+    // 渲染真实口径版，确认单位落到 HTML 且归档留痕
+    const contents = [
+      '门槛没咬住人，达标面比上期收了一圈。',
+      '人次没变，单次时长往上抬了一截。',
+      '散步的每分钟消耗把整体拉高，跑步在往下拽。',
+      '版图只剩两种，宽度收窄、厚度往散步集中。',
+      '这笔能量换成通勤里程，够绕城一圈还剩。',
+      '红包池没清零，罚款面比上期窄了一点。',
+      '阿明此前连击中断，本周重新起链。',
+    ];
+    const titles = real.data.streakBreaks?.length > 0
+      ? [...INSIGHT_TITLES.slice(0, 3), COND_TITLE, ...INSIGHT_TITLES.slice(3)]
+      : INSIGHT_TITLES;
+    real.data.insights = titles.map((title, i) => ({ title, content: contents[i] }));
+    writeFileSync(real.path, JSON.stringify(real.data, null, 2) + '\n', 'utf-8');
+    const htmlPath = resolve(ws, 'reports/2026-issue02.html');
+    const render = exec(renderPath, [real.path, '-o', htmlPath]);
+    assert.equal(render.status, 0, `render 失败：${render.stderr}`);
+    const html = readFileSync(htmlPath, 'utf-8');
+    assert.ok(html.includes('<div class="star-value-sm">12'), '燃效之星主值应为真实 kcal/min');
+    assert.ok(html.includes(' kcal/min</span>'), '单位应显示 kcal/min 而非 MET');
+    assert.ok(!html.includes('class="star-real"'), '真实模式不应重复附实测小字');
+    assert.ok(!/\{\{[^}]*\}\}/.test(html), '不应残留占位符');
+    const archive = JSON.parse(readFileSync(resolve(ws, 'reports/2026-issue02.json'), 'utf-8'));
+    assert.equal(archive.efficiencyStar.metric, 'kcalPerMin', '口径随归档留痕，下期可追溯');
+    assert.equal(archive.efficiencyStar.unit, 'kcal/min');
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
 test('e2e：calc 对未知昵称报错并列出成员表提示', () => {
   const ws = mkdtempSync(resolve(tmpdir(), 'wk-e2e-'));
   try {
@@ -613,7 +807,7 @@ test('e2e：records.json 标注上一期周期 → calc 拒绝（防复用旧接
   }
 });
 
-test('e2e：records.json 缺顶层 weekStart → 只告警不阻断（兼容旧产物）', () => {
+test('e2e：records.json 缺顶层 weekStart → 只告警不阻断（结构不完整的产物）', () => {
   const ws = setupWorkspace();
   try {
     const p = resolve(ws, 'records.json');

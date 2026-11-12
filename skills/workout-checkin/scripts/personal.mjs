@@ -129,8 +129,8 @@ const SPORT_INTENSITY_META = [
 const SPOTLIGHT_INTRO_META = [
   { type: 'recordBreaker', desc: '本周总消耗超过个人历史最高纪录' },
   { type: 'return', desc: '上期整周请假、本期恢复达标' },
-  { type: 'efficiencyStar', desc: '本周平均训练强度（MET，体重归一）全群第一，与「燃烧系」同源配色' },
-  { type: 'progressStar', desc: '本周 kcal/min 较前 3 周均值提升最大（历史满 4 期才参与）' },
+  { type: 'efficiencyStar', desc: '本周燃效全群第一：默认按平均训练强度（MET，体重归一），配置可切真实 kcal/min；与「燃烧系」同源配色' },
+  { type: 'progressStar', desc: '本周真实 kcal/min 较本人前 3 周均值提升最大（历史满 4 期才参与）' },
   { type: 'calorieKing', desc: '本周总消耗全群第一' },
 ];
 
@@ -558,8 +558,8 @@ function main() {
     console.error(`✗ 未找到 members.json：${membersPath}`);
     console.error('  默认读取 reports 目录上一级（工作区根目录）的 members.json，也可用 --members 指定。');
     if (existsSync(LEGACY_MEMBERS_PATH) && LEGACY_MEMBERS_PATH !== membersPath) {
-      console.error(`  检测到旧版配置：${LEGACY_MEMBERS_PATH}`);
-      console.error(`  请迁移到 ${resolve(dirname(reportsDir), 'members.json')}（新版本不再默认读取 skill 目录内配置）。`);
+      console.error(`  检测到 skill 目录内的配置副本：${LEGACY_MEMBERS_PATH}`);
+      console.error(`  请迁移到 ${resolve(dirname(reportsDir), 'members.json')}（配置统一从工作区读取）。`);
     }
     process.exit(1);
   }
@@ -592,7 +592,7 @@ function main() {
     process.exit(1);
   }
   if (!archive.cumulative) {
-    console.error(`✗ 归档 ${archivePath} 缺少 cumulative（旧版生成的归档），请用当前版本 calc.mjs 重新生成该期归档。`);
+    console.error(`✗ 归档 ${archivePath} 缺少 cumulative（归档结构不完整），请用 calc.mjs 重新生成该期归档。`);
     process.exit(1);
   }
 
@@ -606,7 +606,7 @@ function main() {
 
   // 达标率分母 = 个人在册期数，digest 与渲染共用 weeksPresent 这一个解析器，两边永远同一个数。
   // 优先取 cumulative.presentWeeks（calc 每期 +1 链式累加，等于「本人入群后第几期」），
-  // 正常路径全程不读往期归档；只有最新归档里还没有这个字段时才扫一次归档兜底。
+  // 正常路径全程不读往期归档；仅当最新归档缺 presentWeeks 字段时扫一次归档兜底。
   let historyCache = null;
   let presenceCache = null;
   const history = () => (historyCache ??= loadHistory(reportsDir));

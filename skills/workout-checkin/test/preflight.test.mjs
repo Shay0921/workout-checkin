@@ -284,7 +284,7 @@ test('preflight：kmPerMin 含非法值 → 退出码 1', () => {
 
 test('preflight：convert 里有不认识的键 → 只告警不阻塞（写了也不生效）', () => {
   const cfg = baseConfig();
-  cfg.convert.swimPerKmMin = 25; // 旧口径字段：calc 不再读取
+  cfg.convert.swimPerKmMin = 25; // 未识别的键：calc 不读取
   const { status, out } = runPreflight(cfg);
   assert.equal(status, 0, `未知键不应拦住开工，实际输出：\n${out}`);
   assert.match(out, /swimPerKmMin/);

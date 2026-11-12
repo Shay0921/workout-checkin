@@ -61,7 +61,9 @@
       - barOpacity       透明度 = 1 − index × 0.08，最低 0.5（1 位小数）
       - minutes          本项目总分钟（insights 取材用，模板不消费）
       - calories         本项目总卡路里（同上）
-      - kcalPerMin       燃效 = calories ÷ minutes，1 位小数（minutes 为 0 时取 0）
+      - kcalPerMin       燃效 = calories ÷ minutes，1 位小数（minutes 为 0 时取 0）；
+                         **能量维度，不是 MET 强度**：不可据此反推「高强度/低强度」，
+                         强度档位取自 metSnapshot.met / loadScore（见 insight-writing.md §0.7）
   - 6+1 规则：运动类型 ≤ 7 种 → sportStats 全量列出，hasOtherSports=false；
     ≥ 8 种 → sportStats 只取前 6 种，其余合并为「其他」行（列表恒 ≤ 7 行）
   - hasOtherSports     布尔；运动类型 ≥ 8 种时为 true
@@ -74,8 +76,8 @@
                        **未打卡成员也并入本列表**（次数 0、分钟 0、卡路里 0，排序自然沉底）：
       - nickname         昵称（成员表标准名）
       - totalMinutes     总分钟（含折算：楼层×convert.climbPerFloorMin、公里×convert.kmPerMin[项目]、个数×convert.minPerCount[项目]）
-      - totalCalories    总卡路里 = Σ MET × 体重kg × 时长h
-      - loadScore        Σ(MET × 分钟)，体重无关；审计用 avgMET = loadScore ÷ totalMinutes
+      - totalCalories    总卡路里 = Σ 单条能量；单条能量 = 接龙写了 kcal → 实测值，没写 → MET × 体重kg × 时长h 兜底
+      - loadScore        Σ(MET × 分钟)，体重无关；强度维度不受能量来源影响，审计用 avgMET = loadScore ÷ totalMinutes
       - deltaText        「较上期增减」角标文本，如 ▲55 / ▼42；为 null 时该行不显示（只留数量，单位由列头交代）
       - deltaClass       up | down，决定角标配色
       - deltaMinutes     带符号的增减分钟数（审计用）
@@ -93,10 +95,15 @@
                          成就等级每 +10 周继续提升，40-49 周 Lv6、50-59 周 Lv7…)
       - spotlight        本周 spotlight 对象或 null：{type, label}（五类：破纪录/回归战士/
                          燃效之星/进步之星/消耗之星，多颗命中只显示优先级最高 1 颗）
-      - personaTag       人格主标签（有专精取次数最多的专精，无专精取燃烧系/松弛系）或 null
-      - personaClass     标签配色类：按强度档三色（burn 燃烧系橙 / balance 均衡系蓝 / relax 松弛系绿；专精与其强度档同色）/ null
+      - personaTag       人格主标签（有专精取次数最多的专精，无专精取燃烧系/松弛系）或 null；
+                         输入只有累计项目人次 + MET 强度档，与接龙 kcal 无关
+      - personaClass     标签配色类：按强度档三色（burn 燃烧系橙 / balance 均衡系蓝 / relax 松弛系绿；专精与其强度档同色）/ null；
+                         燃烧系/松弛系的 60% 指**高强度/低强度项目的累计人次占比**，不是能量或时长占比
   - totalMinutesSum    名单全体总分钟合计（未打卡为 0 值，合并不影响数值）
   - totalCaloriesSum   名单全体总卡路里合计
+  - calorieCoverage    {reported, estimated, mixed, total, note}：本期能量来源覆盖率
+                       reported 纯实测 / estimated 纯 MET 兜底 / mixed 合并行（实测与折算都有），三者相加 = total
+                       note 直接作为模块 03 表格脚注；随 data 一起进归档，跨期涨跌可据此分辨口径切换
   - totalSessions      全群总人次（= 流水条数；同一次打卡的多个项目各计 1 人次）
   - avgMinutesPerSession = totalMinutesSum ÷ totalSessions，取整（人均单次时长；无人次时为 0）
 
@@ -133,13 +140,23 @@
     自由栏（0-2 条，可选）：从动态扩展池筛选（榜单刷新/项目对比/士气动员/时节展望/特别事件/惊喜彩蛋），宁缺毋滥；title 同样必须 4 字
 
   ## 扩展字段（8 个，calc 合同输出；模板直接消费前 4 个，其余为下游/审计数据）
-  - calorieKing                消耗之星对象或 null：{nickname, kcal, streakWeeks?}
+  - calorieKing                消耗之星对象或 null：{nickname, kcal, streakWeeks?}；kcal 跟随实测优先
                                （streakWeeks 仅蝉联 ≥3 周时出现，模板显示「蝉联 N 周」）
-  - efficiencyStar             燃效之星对象或 null：{nickname, avgMet, streakWeeks?}
-                               （avgMet = Σ(MET×分钟)/Σ分钟，体重归一的平均强度；旧口径 kcal/min 含体重乘数已废弃）
-  - progressStar               进步之星对象或 null：{nickname, prevAvgMet, curMet, improvementPct}
-                               （提升率按 kcal/min 计算，同一人体重约掉；展示值统一为 MET）
-  - milestoneCelebrations[]    本周新解锁里程碑：{nickname, badge, label, level, value, unit}；空数组隐藏
+  - efficiencyStar             燃效之星对象或 null：{nickname, metric, value, unit, realKcalPerMin?, streakWeeks?}
+                               （metric 由 members.json 的 efficiencyStarMetric 决定，随归档留痕：
+                                 'avgMet'      → value = Σ(MET×分钟)/Σ分钟，unit='MET'，体重归一的平均训练强度（默认）；
+                                                另附 realKcalPerMin = 该得主本周真实消耗速率（审计/洞察用，不参与排名）
+                                 'kcalPerMin'  → value = totalCalories/totalMinutes，unit='kcal/min'，榜单完全由实测驱动，
+                                                但体重/设备差异会进榜；两模式都保留 ≥30 分钟参与门槛
+                                 重渲染缺少新字段的归档时，render.mjs 仅在渲染视图补 MET 展示值，不写回归档快照）
+  - progressStar               进步之星对象或 null：{nickname, prevValue, curValue, unit, improvementPct}
+                               （提升率按真实 kcal/min 计算：本人本周 kcal/min vs 前 3 周 kcal/min 均值；
+                                自己跟自己比体重约掉，不做 MET 换算，unit='kcal/min'。
+                                ⚠ 口径切换期：本期实测 kcal 与前 3 周 MET 估算混比，提升率含口径差；
+                                归档数值视为真值，不重算、不暂停颁奖
+                                重渲染缺少新字段的归档时，render.mjs 仅在渲染视图补 unit='MET' 展示值）
+  - milestoneCelebrations[]    本周新解锁里程碑：{nickname, badge, label, level, value, unit}；空数组隐藏；
+                               燃脂狂魔（累计 totalCalories）随本期实测 kcal 增长，其余 5 类徽章只看周数/人次/项目种类
   - spotlights                 昵称 → {type, label} 映射（个人战报/审计用，模板不直接消费）
   - cumulative                 链式累计快照 {group, members}（下期链式与个人战报用，模板不直接消费）
   - metSnapshot                当期 MET + 换算系数快照（口径留存，模板不直接消费）
@@ -476,7 +493,7 @@ html {
         </table>
       </div>
       <div class="table-summary">
-        <span class="table-note">* 卡路里按项目与时长折算</span>
+        <span class="table-note">{{calorieCoverage.note}}</span>
         <span class="summary-right">
           <span>合计 · 总时长 <b>{{totalMinutesSum}} 分钟</b></span>
           <span class="meta-dot">·</span>
@@ -574,14 +591,15 @@ html {
             <div class="star-cell sc-efficiency">
               <div class="star-label"><span class="star-dot"></span>燃效之星{{#if efficiencyStar.streakWeeks}}<span class="star-tag">蝉联 {{efficiencyStar.streakWeeks}} 周</span>{{/if}}</div>
               <div class="star-name">{{efficiencyStar.nickname}}</div>
-              <div class="star-value-sm">{{efficiencyStar.avgMet}}<span class="star-unit"> MET</span></div>
+              <div class="star-value-sm">{{efficiencyStar.value}}<span class="star-unit"> {{efficiencyStar.unit}}</span></div>
+              {{#if efficiencyStar.realKcalPerMin}}<div class="star-real">实测 {{efficiencyStar.realKcalPerMin}} kcal/min</div>{{/if}}
             </div>
             {{/if}}
             {{#if progressStar}}
             <div class="star-cell sc-progress">
               <div class="star-label"><span class="star-dot"></span>进步之星<span class="star-tag">进步 +{{progressStar.improvementPct}}%</span></div>
               <div class="star-name">{{progressStar.nickname}}</div>
-              <div class="star-value-range">{{progressStar.prevAvgMet}} → {{progressStar.curMet}}<span class="star-unit"> MET</span></div>
+              <div class="star-value-range">{{progressStar.prevValue}} → {{progressStar.curValue}}<span class="star-unit"> {{progressStar.unit}}</span></div>
             </div>
             {{/if}}
           </div>
@@ -1454,6 +1472,16 @@ html {
     font-size: 11px;
     font-weight: 400;
     color: var(--color-muted-foreground);
+  }
+  /* 燃效之星默认 MET 口径下附一行真实消耗速率：极小字、不换行，卡片高度只多 12px */
+  .star-real {
+    margin-top: 2px;
+    font-size: 9px;
+    font-weight: 400;
+    line-height: 1.2;
+    font-family: var(--claude-font-mono);
+    color: var(--color-muted-foreground);
+    white-space: nowrap;
   }
 
   /* Return card */
